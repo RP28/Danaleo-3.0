@@ -1,11 +1,17 @@
-.venv/
+# Node
+node_modules/
+frontend/node_modules/
+
+# Build/cache
+frontend/.vite/
+frontend/dist/
+
+# Python
 __pycache__/
 *.pyc
+.venv/
+venv/
+.env
+
+# OS
 .DS_Store
-frontend/node_modules/
-frontend/dist/
-src/danaleo/server/static/*
-!src/danaleo/server/static/.gitkeep
-*.egg-info/
-.pytest_cache/
-.ruff_cache/
