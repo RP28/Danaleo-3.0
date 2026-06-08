@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+frontend/node_modules/
+frontend/dist/
+src/danaleo/server/static/*
+!src/danaleo/server/static/.gitkeep
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
