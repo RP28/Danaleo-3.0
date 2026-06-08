@@ -6,18 +6,73 @@ from danaleo.core.session_store import store
 from danaleo.server.app import app
 
 
-def test_api_end_to_end_workspace_flow(csv_bytes: bytes):
+def upload_csv(client: TestClient, csv_bytes: bytes, filename: str = "customers.csv") -> dict:
+    response = client.post(
+        "/api/upload",
+        files={"file": (filename, csv_bytes, "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_health_and_workspace_before_upload():
     client = TestClient(app)
 
     assert client.get("/api/health").json() == {"status": "ok"}
     assert client.get("/api/workspace").json()["ready"] is False
 
-    bad_upload = client.post("/api/upload", files={"file": ("bad.txt", b"not,csv")})
-    assert bad_upload.status_code == 400
 
-    uploaded = client.post("/api/upload", files={"file": ("customers.csv", csv_bytes, "text/csv")})
-    assert uploaded.status_code == 200
-    workspace = uploaded.json()
+def test_api_returns_400_before_upload_for_workspace_actions():
+    client = TestClient(app)
+
+    create = client.post("/api/sessions", json={"name": "Branch", "parent_id": "missing"})
+    assert create.status_code == 400
+    assert "Upload a CSV file first" in create.json()["detail"]
+
+    activate = client.post("/api/sessions/activate", json={"session_id": "missing"})
+    assert activate.status_code == 400
+    assert "Upload a CSV file first" in activate.json()["detail"]
+
+    export_response = client.get("/api/export/notebook")
+    assert export_response.status_code == 400
+    assert "Nothing to export yet" in export_response.json()["detail"]
+
+
+def test_upload_rejects_non_csv_file(csv_bytes: bytes):
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/upload",
+        files={"file": ("customers.txt", csv_bytes, "text/plain")},
+    )
+
+    assert response.status_code == 400
+    assert "CSV" in response.json()["detail"]
+
+
+def test_upload_with_sampling_modes(csv_bytes: bytes):
+    client = TestClient(app)
+
+    sampled = client.post(
+        "/api/upload",
+        data={"sample_mode": "n", "sample_n": "3", "random_state": "7"},
+        files={"file": ("customers.csv", csv_bytes, "text/csv")},
+    )
+
+    assert sampled.status_code == 200
+    assert sampled.json()["active_session"]["overview"]["rows"] == 3
+    assert sampled.json()["sample_info"] == {
+        "mode": "n",
+        "sample_n": 3,
+        "random_state": 7,
+        "original_rows": 8,
+    }
+
+
+def test_api_end_to_end_workspace_flow(csv_bytes: bytes):
+    client = TestClient(app)
+
+    workspace = upload_csv(client, csv_bytes)
     base_id = workspace["active_session_id"]
 
     created = client.post("/api/sessions", json={"name": "Branch 1", "parent_id": base_id})
@@ -36,15 +91,24 @@ def test_api_end_to_end_workspace_flow(csv_bytes: bytes):
     assert stats.status_code == 200
     assert stats.json()["kind"] == "numeric"
 
-    operated = client.post(f"/api/sessions/{branch_id}/operations", json={"operation_type": "filter_rows", "params": {"query": "age > 30"}})
+    operated = client.post(
+        f"/api/sessions/{branch_id}/operations",
+        json={"operation_type": "filter_rows", "params": {"query": "age > 30"}},
+    )
     assert operated.status_code == 200
+
     branch = next(session for session in operated.json()["sessions"] if session["id"] == branch_id)
     assert branch["overview"]["rows"] == 5
     assert operated.json()["active_session_id"] == base_id
 
     preview = client.post(
         "/api/plots/preview",
-        json={"session_id": branch_id, "column": "age", "plot_type": "histogram", "controls": {"bins": 4}},
+        json={
+            "session_id": branch_id,
+            "column": "age",
+            "plot_type": "histogram",
+            "controls": {"bins": 4},
+        },
     )
     assert preview.status_code == 200
     assert preview.json()["image"].startswith("data:image/png;base64,")
@@ -62,17 +126,23 @@ def test_api_end_to_end_workspace_flow(csv_bytes: bytes):
         },
     )
     assert saved.status_code == 200
+
     plot = saved.json()["saved_plots"][0]
     assert plot["title"] == "Age preview"
 
-    updated_plot = client.patch(f"/api/plots/{plot['id']}", json={"include_in_export": False, "remark": "Skip it"})
+    updated_plot = client.patch(
+        f"/api/plots/{plot['id']}",
+        json={"include_in_export": False, "remark": "Skip it"},
+    )
     assert updated_plot.status_code == 200
     assert updated_plot.json()["saved_plots"][0]["include_in_export"] is False
     assert updated_plot.json()["saved_plots"][0]["remark"] == "Skip it"
 
     export_response = client.get("/api/export/notebook")
     assert export_response.status_code == 200
-    assert export_response.headers["content-disposition"].endswith('filename="customers_eda.ipynb"')
+    assert export_response.headers["content-disposition"].endswith(
+        'filename="customers_eda.ipynb"'
+    )
     assert b"Danaleo EDA Export" in export_response.content
 
     deleted = client.delete(f"/api/sessions/{branch_id}")
@@ -83,22 +153,66 @@ def test_api_end_to_end_workspace_flow(csv_bytes: bytes):
 
 def test_api_returns_400_for_invalid_session_actions(csv_bytes: bytes):
     client = TestClient(app)
-    client.post("/api/upload", files={"file": ("customers.csv", csv_bytes, "text/csv")})
+    upload_csv(client, csv_bytes)
 
     response = client.patch("/api/sessions/missing", json={"name": "Nope"})
     assert response.status_code == 400
     assert response.json()["detail"] == "Session not found"
 
     base_id = store.active_session_id
+
     response = client.delete(f"/api/sessions/{base_id}")
     assert response.status_code == 400
     assert "Cannot delete the only session" in response.json()["detail"]
+
+    response = client.get(f"/api/sessions/{base_id}/columns/missing/stats")
+    assert response.status_code == 400
+    assert "Unknown column" in response.json()["detail"]
+
+
+def test_api_operation_and_plot_error_edges(csv_bytes: bytes):
+    client = TestClient(app)
+    workspace = upload_csv(client, csv_bytes)
+    base_id = workspace["active_session_id"]
+
+    bad_operation = client.post(
+        f"/api/sessions/{base_id}/operations",
+        json={"operation_type": "filter_rows", "params": {"query": "   "}},
+    )
+    assert bad_operation.status_code == 400
+    assert "Filter query cannot be empty" in bad_operation.json()["detail"]
+
+    empty_preview = client.post(
+        "/api/plots/preview",
+        json={
+            "session_id": base_id,
+            "column": "age",
+            "plot_type": "histogram",
+            "local_query": "age > 999",
+            "controls": {"bins": 4},
+        },
+    )
+    assert empty_preview.status_code == 400
+    assert "returned no rows" in empty_preview.json()["detail"]
+
+    missing_plot_update = client.patch(
+        "/api/plots/missing",
+        json={"include_in_export": True, "remark": "No plot"},
+    )
+    assert missing_plot_update.status_code == 400
+    assert "Plot not found" in missing_plot_update.json()["detail"]
 
 
 def test_frontend_assets_are_served_without_browser_cache():
     client = TestClient(app)
 
-    response = client.get("/", headers={"If-None-Match": "cached", "If-Modified-Since": "Wed, 21 Oct 2015 07:28:00 GMT"})
+    response = client.get(
+        "/",
+        headers={
+            "If-None-Match": "cached",
+            "If-Modified-Since": "Wed, 21 Oct 2015 07:28:00 GMT",
+        },
+    )
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store, max-age=0, must-revalidate"

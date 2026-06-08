@@ -7,39 +7,88 @@ from danaleo.core.stats import column_cards, column_stats, dataframe_overview, i
 
 
 def test_dataframe_overview_and_column_cards():
-    df = pd.DataFrame({"num": [1, 2, None], "cat": ["A", "B", "A"], "flag": [True, False, True]})
+    df = pd.DataFrame(
+        {
+            "num": [1, 2, None],
+            "cat": ["A", "B", "A"],
+            "flag": [True, False, True],
+        }
+    )
 
     overview = dataframe_overview(df)
+
     assert overview["rows"] == 3
     assert overview["columns"] == 3
     assert overview["memory_bytes"] > 0
+    assert overview["memory_mb"] >= 0
 
     cards = {card["name"]: card for card in column_cards(df)}
+
     assert cards["num"]["kind"] == "numeric"
     assert cards["cat"]["kind"] == "categorical"
+    assert cards["flag"]["kind"] == "categorical"
     assert cards["num"]["missing"] == 1
+    assert cards["num"]["unique"] == 2
+
+
+def test_dataframe_overview_handles_empty_dataframe():
+    df = pd.DataFrame({"num": [], "cat": []})
+
+    overview = dataframe_overview(df)
+
+    assert overview["rows"] == 0
+    assert overview["columns"] == 2
+    assert overview["memory_bytes"] >= 0
+    assert overview["memory_mb"] >= 0
 
 
 def test_column_stats_for_numeric_and_categorical_columns():
     df = pd.DataFrame({"num": [1, 2, 3, None], "cat": ["A", "B", "A", None]})
 
     numeric = column_stats(df, "num")
+
+    assert numeric["name"] == "num"
     assert numeric["kind"] == "numeric"
+    assert numeric["rows"] == 4
+    assert numeric["non_null"] == 3
+    assert numeric["missing"] == 1
     assert numeric["stats"]["mean"] == pytest.approx(2.0)
     assert numeric["stats"]["median"] == pytest.approx(2.0)
-    assert numeric["missing"] == 1
+    assert numeric["stats"]["min"] == pytest.approx(1.0)
+    assert numeric["stats"]["max"] == pytest.approx(3.0)
 
     categorical = column_stats(df, "cat")
+
+    assert categorical["name"] == "cat"
     assert categorical["kind"] == "categorical"
-    assert categorical["stats"]["top_values"][0] == {"value": "A", "count": 2}
-    assert any(item["value"] == "<missing>" for item in categorical["stats"]["top_values"])
+    assert categorical["missing"] == 1
+    top_values = {
+        item["value"]: item["count"]
+        for item in categorical["stats"]["top_values"]
+    }
+    assert top_values["A"] == 2
+    assert top_values["B"] == 1
+    assert categorical["missing"] == 1
+
+
+def test_boolean_column_stats_are_categorical():
+    df = pd.DataFrame({"flag": [True, False, True]})
+
+    stats = column_stats(df, "flag")
+
+    assert stats["kind"] == "categorical"
+    values = {item["value"]: item["count"] for item in stats["stats"]["top_values"]}
+    assert values["True"] == 2
+    assert values["False"] == 1
 
 
 def test_column_stats_rejects_unknown_column():
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match="Unknown column"):
         column_stats(pd.DataFrame({"x": [1]}), "missing")
 
 
-def test_infer_kind_handles_dates_and_booleans():
+def test_infer_kind_handles_dates_booleans_and_numbers():
     assert infer_kind(pd.Series([True, False])) == "categorical"
+    assert infer_kind(pd.Series([1, 2, 3])) == "numeric"
     assert infer_kind(pd.Series(pd.to_datetime(["2026-01-01"]))) == "datetime"
+    assert infer_kind(pd.Series(["A", "B"])) == "categorical"
