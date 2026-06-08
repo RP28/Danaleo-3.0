@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import math
 from io import BytesIO
 from typing import Any
@@ -9,1001 +8,484 @@ from typing import Any
 import matplotlib
 
 matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from pandas.api.types import is_numeric_dtype
 
-PLOT_BG = "#10131c"
-PANEL_BG = "#151a27"
-TEXT = "#e8edf8"
-MUTED = "#9aa7bd"
-GRID = "#273042"
-ACCENT = "#7c5cff"
-ACCENT_2 = "#26d0ce"
-PALETTE = [
-    "#7c5cff",
-    "#26d0ce",
-    "#ff9f43",
-    "#ff6384",
-    "#5dade2",
-    "#60d394",
-    "#c084fc",
-    "#f6c85f",
-]
 
-GROUPED_NUMERIC_TYPES = {"grouped_kde", "grouped_box", "grouped_violin"}
-SUBPLOT_COMPATIBLE_TYPES = {
+SUPPORTED_PLOT_TYPES = {
     "histogram",
     "kde",
     "box",
     "violin",
+    "bar_top_n",
+    "pie_top_n",
     "grouped_kde",
     "grouped_box",
     "grouped_violin",
-    "bar_top_n",
-    "pie_top_n",
 }
 
 
-def _apply_local_query(df: pd.DataFrame, query: str | None) -> pd.DataFrame:
-    query = (query or "").strip()
-    if not query:
-        return df
+def _as_int(value: Any, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        result = default
 
-    result = df.query(query).copy()
-    if result.empty:
-        raise ValueError("Local plot query returned no rows")
+    if minimum is not None:
+        result = max(minimum, result)
+    if maximum is not None:
+        result = min(maximum, result)
+
     return result
 
 
-def _as_json(fig: go.Figure) -> dict[str, Any]:
-    return json.loads(fig.to_json())
+def _as_float(value: Any, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        result = default
+
+    if minimum is not None:
+        result = max(minimum, result)
+    if maximum is not None:
+        result = min(maximum, result)
+
+    return result
 
 
-def _kde(values: np.ndarray, points: int = 160, bw_adjust: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
-    values = values[~np.isnan(values)].astype(float)
-    if len(values) < 2:
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _apply_local_query(df: pd.DataFrame, local_query: str) -> pd.DataFrame:
+    query = str(local_query or "").strip()
+    if not query:
+        return df.copy()
+
+    result = df.query(query).copy()
+    if result.empty:
+        raise ValueError("Local plot filter returned no rows")
+
+    return result
+
+
+def _require_column(df: pd.DataFrame, column: str) -> None:
+    if column not in df.columns:
+        raise KeyError(f"Unknown column: {column}")
+
+
+def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
+    _require_column(df, column)
+    series = pd.to_numeric(df[column], errors="coerce").dropna()
+
+    if series.empty:
+        raise ValueError(f"Column {column!r} has no numeric values to plot")
+
+    return series.astype(float)
+
+
+def _category_series(df: pd.DataFrame, column: str) -> pd.Series:
+    _require_column(df, column)
+    series = df[column].astype("string").fillna("<missing>")
+    series = series.replace("", "<empty>")
+    return series
+
+
+def _safe_title(value: str) -> str:
+    return value.replace("_", " ").title()
+
+
+def _format_axis_labels(ax: plt.Axes, rotation: int = 35) -> None:
+    ax.tick_params(axis="x", labelrotation=rotation)
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+
+
+def _encode_figure(fig: plt.Figure) -> dict[str, Any]:
+    buffer = BytesIO()
+    fig.tight_layout()
+    fig.savefig(buffer, format="png", dpi=145, bbox_inches="tight")
+    plt.close(fig)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return {"image": f"data:image/png;base64,{encoded}"}
+
+
+def _kde_values(values: np.ndarray, points: int = 160, bw_adjust: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    clean = values[np.isfinite(values)]
+
+    if clean.size < 2:
         raise ValueError("KDE needs at least two numeric values")
 
-    std = float(values.std(ddof=1)) or 1.0
-    bandwidth = 1.06 * std * (len(values) ** (-1 / 5)) * max(float(bw_adjust), 0.05)
-    if bandwidth <= 0:
-        bandwidth = std or 1.0
+    if clean.size > 3000:
+        positions = np.linspace(0, clean.size - 1, 3000).astype(int)
+        clean = np.sort(clean)[positions]
 
-    x_min, x_max = float(values.min()), float(values.max())
-    padding = (x_max - x_min) * 0.1 or 1.0
-    xs = np.linspace(x_min - padding, x_max + padding, int(points))
-    scaled = (xs[:, None] - values[None, :]) / bandwidth
-    ys = np.exp(-0.5 * scaled**2).sum(axis=1) / (len(values) * bandwidth * np.sqrt(2 * np.pi))
-    return xs, ys
+    minimum = float(np.min(clean))
+    maximum = float(np.max(clean))
 
+    if math.isclose(minimum, maximum):
+        minimum -= 0.5
+        maximum += 0.5
 
-def _numeric_values(data: pd.DataFrame, column: str) -> pd.Series:
-    values = pd.to_numeric(data[column], errors="coerce").dropna()
-    if values.empty:
-        raise ValueError(f"Column has no numeric values to plot: {column}")
-    return values
+    points = max(40, int(points))
+    xs = np.linspace(minimum, maximum, points)
 
+    std = float(np.std(clean, ddof=1)) if clean.size > 1 else 0.0
+    bandwidth = 1.06 * std * (clean.size ** (-1 / 5)) if std > 0 else (maximum - minimum) / 20
+    bandwidth = max(float(bandwidth) * max(float(bw_adjust), 0.05), 1e-9)
 
-def _column_from_controls(controls: dict[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = controls.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+    z = (xs[:, None] - clean[None, :]) / bandwidth
+    density = np.exp(-0.5 * z * z).mean(axis=1) / (bandwidth * math.sqrt(2 * math.pi))
+
+    return xs, density
 
 
-def _group_column(controls: dict[str, Any]) -> str | None:
-    return _column_from_controls(controls, "group_by", "split_by", "hue", "color_by")
+def _draw_histogram(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    series = _numeric_series(df, column)
+    bins = _as_int(controls.get("bins"), 30, minimum=2, maximum=200)
+    show_kde = _as_bool(controls.get("show_kde"), False)
+
+    ax.hist(series.to_numpy(), bins=bins, density=show_kde, alpha=0.82)
+    ax.set_title(f"Histogram — {column}")
+    ax.set_xlabel(column)
+    ax.set_ylabel("Density" if show_kde else "Count")
+
+    if show_kde and len(series) >= 2:
+        xs, density = _kde_values(
+            series.to_numpy(),
+            points=_as_int(controls.get("points"), 160, minimum=40, maximum=500),
+            bw_adjust=_as_float(controls.get("bw_adjust"), 1.0, minimum=0.05, maximum=10),
+        )
+        ax.plot(xs, density, linewidth=2)
 
 
-def _group_limit(controls: dict[str, Any]) -> int:
-    try:
-        return max(1, min(int(controls.get("group_limit", 8)), 30))
-    except Exception:
-        return 8
+def _draw_kde(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    series = _numeric_series(df, column)
+    xs, density = _kde_values(
+        series.to_numpy(),
+        points=_as_int(controls.get("points"), 160, minimum=40, maximum=500),
+        bw_adjust=_as_float(controls.get("bw_adjust"), 1.0, minimum=0.05, maximum=10),
+    )
+
+    ax.plot(xs, density, linewidth=2)
+
+    if _as_bool(controls.get("fill"), True):
+        ax.fill_between(xs, density, alpha=0.25)
+
+    ax.set_title(f"KDE — {column}")
+    ax.set_xlabel(column)
+    ax.set_ylabel("Density")
 
 
-def _subplot_col_count(controls: dict[str, Any]) -> int:
-    try:
-        return max(1, min(int(controls.get("subplot_cols", 2)), 6))
-    except Exception:
-        return 2
+def _draw_box(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    series = _numeric_series(df, column)
+    show_outliers = _as_bool(controls.get("show_outliers"), True)
+
+    ax.boxplot(series.to_numpy(), vert=True, showfliers=show_outliers)
+    ax.set_title(f"Box plot — {column}")
+    ax.set_xticklabels([column])
+    ax.set_ylabel(column)
 
 
-def _subplot_limit(controls: dict[str, Any]) -> int:
-    try:
-        return max(1, min(int(controls.get("subplot_limit", 12)), 50))
-    except Exception:
-        return 12
+def _draw_violin(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    series = _numeric_series(df, column)
+
+    ax.violinplot(series.to_numpy(), showmeans=True, showmedians=True)
+    ax.set_title(f"Violin plot — {column}")
+    ax.set_xticks([1])
+    ax.set_xticklabels([column])
+    ax.set_ylabel(column)
 
 
-def _is_subplot_request(controls: dict[str, Any]) -> bool:
-    return bool(controls.get("subplot_enabled") or controls.get("subplots"))
+def _top_n_data(df: pd.DataFrame, column: str, top_n: int, plot_type: str) -> tuple[list[str], list[float], str]:
+    _require_column(df, column)
+    series = df[column]
 
+    if is_numeric_dtype(series):
+        numeric = pd.to_numeric(series, errors="coerce").dropna()
 
-def _require_columns(data: pd.DataFrame, columns: list[str]) -> None:
-    missing = [column for column in columns if column not in data.columns]
-    if missing:
-        raise ValueError(f"Column not found: {', '.join(missing)}")
+        if numeric.empty:
+            raise ValueError(f"Column {column!r} has no numeric values to plot")
 
+        counts = numeric.value_counts(dropna=False).head(top_n)
 
-def _subplot_columns(data: pd.DataFrame, primary_column: str, controls: dict[str, Any]) -> list[str]:
-    raw = controls.get("subplot_columns") or controls.get("columns") or []
-    if isinstance(raw, str):
-        raw_columns = [raw]
-    elif isinstance(raw, list):
-        raw_columns = raw
+        labels = [str(value) for value in counts.index.tolist()]
+        values = [float(count) for count in counts.tolist()]
+        y_label = "Count"
+
     else:
+        counts = _category_series(df, column).value_counts(dropna=False).head(top_n)
+
+        labels = [str(value) for value in counts.index.tolist()]
+        values = [float(count) for count in counts.tolist()]
+        y_label = "Count"
+
+    if not values:
+        raise ValueError(f"No values available for Top {top_n}")
+
+    return labels, values, y_label
+
+
+def _draw_top_n_bar(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    top_n = _as_int(controls.get("top_n"), 15, minimum=1, maximum=100)
+    labels, values, y_label = _top_n_data(df, column, top_n, "bar_top_n")
+
+    ax.bar(labels, values)
+    ax.set_title(f"Top {len(values)} values — {column}")
+    ax.set_xlabel(column)
+    ax.set_ylabel(y_label)
+    _format_axis_labels(ax)
+
+
+def _draw_top_n_pie(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    top_n = _as_int(controls.get("top_n"), 15, minimum=1, maximum=100)
+    labels, values, _ = _top_n_data(df, column, top_n, "pie_top_n")
+
+    ax.pie(values, labels=labels, autopct="%1.1f%%", startangle=90)
+    ax.set_title(f"Top {len(values)} values share — {column}")
+    ax.axis("equal")
+
+
+def _limited_groups(df: pd.DataFrame, group_column: str, limit: int) -> list[str]:
+    groups = _category_series(df, group_column).value_counts(dropna=False).head(limit)
+    return [str(group) for group in groups.index.tolist()]
+
+
+def _draw_grouped_kde(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    group_column = str(controls.get("group_by") or "").strip()
+    if not group_column:
+        raise ValueError("Choose a categorical column in Group by")
+
+    _require_column(df, group_column)
+    limit = _as_int(controls.get("group_limit"), 8, minimum=1, maximum=30)
+    groups = _limited_groups(df, group_column, limit)
+    group_values = _category_series(df, group_column)
+
+    for group in groups:
+        sub_df = df[group_values == group]
+        series = _numeric_series(sub_df, column)
+
+        if len(series) < 2:
+            continue
+
+        xs, density = _kde_values(
+            series.to_numpy(),
+            points=_as_int(controls.get("points"), 160, minimum=40, maximum=500),
+            bw_adjust=_as_float(controls.get("bw_adjust"), 1.0, minimum=0.05, maximum=10),
+        )
+
+        ax.plot(xs, density, linewidth=2, label=group)
+
+        if _as_bool(controls.get("fill"), True):
+            ax.fill_between(xs, density, alpha=0.12)
+
+    ax.set_title(f"KDE — {column} by {group_column}")
+    ax.set_xlabel(column)
+    ax.set_ylabel("Density")
+    ax.legend(fontsize=8)
+
+
+def _grouped_numeric_values(df: pd.DataFrame, column: str, group_column: str, limit: int) -> tuple[list[str], list[np.ndarray]]:
+    _require_column(df, group_column)
+    group_values = _category_series(df, group_column)
+    groups = _limited_groups(df, group_column, limit)
+
+    labels: list[str] = []
+    values: list[np.ndarray] = []
+
+    for group in groups:
+        sub_df = df[group_values == group]
+        numeric = _numeric_series(sub_df, column).to_numpy()
+
+        if numeric.size:
+            labels.append(group)
+            values.append(numeric)
+
+    if not values:
+        raise ValueError("No grouped numeric values available to plot")
+
+    return labels, values
+
+
+def _draw_grouped_box(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    group_column = str(controls.get("group_by") or "").strip()
+    if not group_column:
+        raise ValueError("Choose a categorical column in Group by")
+
+    labels, values = _grouped_numeric_values(
+        df,
+        column,
+        group_column,
+        _as_int(controls.get("group_limit"), 8, minimum=1, maximum=30),
+    )
+
+    ax.boxplot(values, labels=labels, showfliers=_as_bool(controls.get("show_outliers"), True))
+    ax.set_title(f"Box plot — {column} by {group_column}")
+    ax.set_ylabel(column)
+    _format_axis_labels(ax)
+
+
+def _draw_grouped_violin(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    group_column = str(controls.get("group_by") or "").strip()
+    if not group_column:
+        raise ValueError("Choose a categorical column in Group by")
+
+    labels, values = _grouped_numeric_values(
+        df,
+        column,
+        group_column,
+        _as_int(controls.get("group_limit"), 8, minimum=1, maximum=30),
+    )
+
+    ax.violinplot(values, showmeans=True, showmedians=True)
+    ax.set_title(f"Violin plot — {column} by {group_column}")
+    ax.set_ylabel(column)
+    ax.set_xticks(range(1, len(labels) + 1))
+    ax.set_xticklabels(labels)
+    _format_axis_labels(ax)
+
+
+def _draw_one(ax: plt.Axes, df: pd.DataFrame, column: str, plot_type: str, controls: dict[str, Any]) -> None:
+    if plot_type == "histogram":
+        _draw_histogram(ax, df, column, controls)
+    elif plot_type == "kde":
+        _draw_kde(ax, df, column, controls)
+    elif plot_type == "box":
+        _draw_box(ax, df, column, controls)
+    elif plot_type == "violin":
+        _draw_violin(ax, df, column, controls)
+    elif plot_type == "bar_top_n":
+        _draw_top_n_bar(ax, df, column, controls)
+    elif plot_type == "pie_top_n":
+        _draw_top_n_pie(ax, df, column, controls)
+    elif plot_type == "grouped_kde":
+        _draw_grouped_kde(ax, df, column, controls)
+    elif plot_type == "grouped_box":
+        _draw_grouped_box(ax, df, column, controls)
+    elif plot_type == "grouped_violin":
+        _draw_grouped_violin(ax, df, column, controls)
+    else:
+        raise ValueError(f"Unsupported plot type: {plot_type}")
+
+
+def _subplot_columns(column: str, controls: dict[str, Any]) -> list[str]:
+    raw_columns = controls.get("subplot_columns") or []
+
+    if isinstance(raw_columns, str):
+        raw_columns = [raw_columns]
+
+    if not isinstance(raw_columns, list):
         raw_columns = []
 
     columns: list[str] = []
-    for value in [primary_column, *raw_columns]:
-        if not isinstance(value, str):
-            continue
-        column = value.strip()
-        if column and column not in columns:
-            columns.append(column)
+    for value in [column, *raw_columns]:
+        if isinstance(value, str) and value and value not in columns:
+            columns.append(value)
 
-    columns = columns[: _subplot_limit(controls)]
-    _require_columns(data, columns)
-    return columns
+    limit = _as_int(controls.get("subplot_limit"), 12, minimum=2, maximum=30)
+    return columns[:limit]
 
 
-def _grouped_numeric_frame(
-    data: pd.DataFrame,
-    value_col: str,
-    group_col: str,
-    controls: dict[str, Any],
-) -> tuple[pd.DataFrame, list[str]]:
-    _require_columns(data, [value_col, group_col])
-
-    frame = data[[value_col, group_col]].copy()
-    frame[value_col] = pd.to_numeric(frame[value_col], errors="coerce")
-    frame = frame.dropna(subset=[value_col])
-    if frame.empty:
-        raise ValueError(f"Column has no numeric values to plot: {value_col}")
-
-    frame["__group_label"] = frame[group_col].astype("string").fillna("Missing")
-    frame["__group_label"] = frame["__group_label"].replace("", "Missing")
-
-    limit = _group_limit(controls)
-    group_order = frame["__group_label"].value_counts().head(limit).index.astype(str).tolist()
-    frame = frame[frame["__group_label"].astype(str).isin(group_order)].copy()
-
-    if frame.empty or not group_order:
-        raise ValueError(f"No plottable groups found in: {group_col}")
-
-    return frame, group_order
-
-
-def _new_axes() -> tuple[plt.Figure, plt.Axes]:
-    fig, ax = plt.subplots(figsize=(9.2, 4.8), dpi=140)
-    fig.patch.set_facecolor(PLOT_BG)
-    ax.set_facecolor(PLOT_BG)
-    return fig, ax
-
-
-def _style_axis(ax: plt.Axes, title: str, xlabel: str | None = None, ylabel: str | None = None) -> None:
-    ax.set_title(title, color=TEXT, fontsize=13, pad=16, loc="left")
-    if xlabel:
-        ax.set_xlabel(xlabel, color=MUTED, labelpad=10)
-    if ylabel:
-        ax.set_ylabel(ylabel, color=MUTED, labelpad=10)
-    ax.tick_params(colors=MUTED, labelsize=9)
-    for spine in ax.spines.values():
-        spine.set_color(GRID)
-    ax.grid(True, axis="y", color=GRID, alpha=0.45, linewidth=0.8)
-
-
-def _style_legend(ax: plt.Axes) -> None:
-    legend = ax.legend(frameon=True, fontsize=8)
-    if not legend:
-        return
-    legend.get_frame().set_facecolor(PANEL_BG)
-    legend.get_frame().set_edgecolor(GRID)
-    for text in legend.get_texts():
-        text.set_color(TEXT)
-
-
-def _encode_figure(fig: plt.Figure) -> str:
-    buffer = BytesIO()
-    fig.savefig(buffer, format="png", facecolor=fig.get_facecolor(), bbox_inches="tight")
-    plt.close(fig)
-    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
-
-
-def _draw_grouped_kde_axis(
-    ax: plt.Axes,
-    data: pd.DataFrame,
-    value_col: str,
-    group_col: str,
-    title: str,
-    controls: dict[str, Any],
-    show_legend: bool = True,
-) -> None:
-    frame, group_order = _grouped_numeric_frame(data, value_col, group_col, controls)
-    points = int(controls.get("points", 160))
-    bw_adjust = float(controls.get("bw_adjust", 1.0))
-    fill = bool(controls.get("fill", False))
-
-    plotted = 0
-    for idx, label in enumerate(group_order):
-        values = frame.loc[frame["__group_label"].astype(str) == label, value_col].dropna().to_numpy()
-        if len(values) < 2:
-            continue
-        xs, ys = _kde(values, points, bw_adjust)
-        color = PALETTE[idx % len(PALETTE)]
-        ax.plot(xs, ys, color=color, linewidth=2, label=f"{label} ({len(values)})")
-        if fill:
-            ax.fill_between(xs, ys, color=color, alpha=0.12)
-        plotted += 1
-
-    if plotted == 0:
-        raise ValueError("Grouped KDE needs at least one group with two numeric values")
-
-    _style_axis(ax, title, value_col, "density")
-    if show_legend:
-        _style_legend(ax)
-
-
-def _draw_grouped_box_or_violin_axis(
-    ax: plt.Axes,
-    data: pd.DataFrame,
-    value_col: str,
-    group_col: str,
-    plot_type: str,
-    title: str,
-    controls: dict[str, Any],
-) -> None:
-    frame, group_order = _grouped_numeric_frame(data, value_col, group_col, controls)
-
-    grouped_values: list[np.ndarray] = []
-    labels: list[str] = []
-    for label in group_order:
-        values = frame.loc[frame["__group_label"].astype(str) == label, value_col].dropna().to_numpy()
-        if len(values):
-            grouped_values.append(values)
-            labels.append(str(label)[:28])
-
-    if not grouped_values:
-        raise ValueError("No numeric values after grouping")
-
-    if plot_type in {"grouped_violin", "violin"}:
-        parts = ax.violinplot(grouped_values, showmeans=True, showmedians=True)
-        for idx, body in enumerate(parts.get("bodies", [])):
-            body.set_facecolor(PALETTE[idx % len(PALETTE)])
-            body.set_edgecolor(GRID)
-            body.set_alpha(0.72)
-    else:
-        box = ax.boxplot(grouped_values, labels=labels, vert=True, patch_artist=True)
-        for idx, patch in enumerate(box.get("boxes", [])):
-            patch.set_facecolor(PALETTE[idx % len(PALETTE)])
-            patch.set_alpha(0.72)
-
-    ax.set_xticks(range(1, len(labels) + 1))
-    ax.set_xticklabels(labels, rotation=35, ha="right")
-    _style_axis(ax, title, group_col, value_col)
-
-
-def _draw_single_axis(
-    ax: plt.Axes,
-    data: pd.DataFrame,
+def _build_subplot_figure(
+    df: pd.DataFrame,
     column: str,
     plot_type: str,
-    title: str,
     controls: dict[str, Any],
-    show_legend: bool = True,
-) -> None:
-    group_col = _group_column(controls)
-
-    if plot_type == "histogram":
-        values = _numeric_values(data, column)
-        bins = int(controls.get("bins", 30))
-        ax.hist(values, bins=bins, color=ACCENT, alpha=0.82, edgecolor=PLOT_BG)
-        _style_axis(ax, title, column, "count")
-        if controls.get("show_kde", False):
-            xs, ys = _kde(values.to_numpy(), bw_adjust=float(controls.get("bw_adjust", 1.0)))
-            ax2 = ax.twinx()
-            ax2.plot(xs, ys, color=ACCENT_2, linewidth=2)
-            ax2.set_ylabel("density", color=MUTED)
-            ax2.tick_params(colors=MUTED, labelsize=9)
-            for spine in ax2.spines.values():
-                spine.set_color(GRID)
-        return
-
-    if plot_type == "kde":
-        values = _numeric_values(data, column)
-        points = int(controls.get("points", 160))
-        bw_adjust = float(controls.get("bw_adjust", 1.0))
-        xs, ys = _kde(values.to_numpy(), points, bw_adjust)
-        ax.plot(xs, ys, color=ACCENT, linewidth=2.2)
-        if controls.get("fill", True):
-            ax.fill_between(xs, ys, color=ACCENT, alpha=0.28)
-        _style_axis(ax, title, column, "density")
-        return
-
-    if plot_type == "grouped_kde":
-        if not group_col:
-            raise ValueError("Choose a categorical column in Group by")
-        _draw_grouped_kde_axis(ax, data, column, group_col, title, controls, show_legend)
-        return
-
-    if plot_type in {"box", "grouped_box"}:
-        if group_col and group_col in data.columns:
-            _draw_grouped_box_or_violin_axis(ax, data, column, group_col, plot_type, title, controls)
-        else:
-            values = _numeric_values(data, column)
-            box = ax.boxplot(values.to_numpy(), vert=False, patch_artist=True)
-            for patch in box.get("boxes", []):
-                patch.set_facecolor(ACCENT)
-                patch.set_alpha(0.72)
-            _style_axis(ax, title, column, None)
-        return
-
-    if plot_type in {"violin", "grouped_violin"}:
-        if group_col and group_col in data.columns:
-            _draw_grouped_box_or_violin_axis(ax, data, column, group_col, plot_type, title, controls)
-        else:
-            values = _numeric_values(data, column)
-            parts = ax.violinplot(values.to_numpy(), showmeans=True, showmedians=True)
-            for body in parts.get("bodies", []):
-                body.set_facecolor(ACCENT)
-                body.set_edgecolor(GRID)
-                body.set_alpha(0.72)
-            ax.set_xticks([1])
-            ax.set_xticklabels([column])
-            _style_axis(ax, title, None, column)
-        return
-
-    if plot_type == "bar_top_n":
-        top_n = int(controls.get("top_n", 15))
-        counts = data[column].astype("string").fillna("").value_counts().head(top_n)
-        counts = counts.iloc[::-1]
-        ax.barh(counts.index.astype(str), counts.values, color=ACCENT)
-        _style_axis(ax, title, "count", column)
-        return
-
-    if plot_type == "pie_top_n":
-        top_n = int(controls.get("top_n", 10))
-        counts = data[column].astype("string").fillna("").value_counts().head(top_n)
-        ax.pie(counts.values, labels=counts.index.astype(str), autopct="%1.1f%%", textprops={"color": TEXT, "fontsize": 8})
-        ax.set_title(title, color=TEXT, fontsize=13, pad=16, loc="left")
-        return
-
-    raise ValueError(f"Unsupported plot type: {plot_type}")
-
-
-def _matplotlib_subplots_image(
-    data: pd.DataFrame,
-    columns: list[str],
-    plot_type: str,
-    title_suffix: str,
-    controls: dict[str, Any],
-) -> str:
-    if plot_type not in SUBPLOT_COMPATIBLE_TYPES:
-        raise ValueError(f"Subplots are not supported for plot type: {plot_type}")
+) -> dict[str, Any]:
+    columns = _subplot_columns(column, controls)
 
     if len(columns) < 2:
         raise ValueError("Choose at least two columns for subplot mode")
 
-    subplot_cols = min(_subplot_col_count(controls), len(columns))
-    subplot_rows = int(math.ceil(len(columns) / subplot_cols))
-    fig_width = max(8.5, subplot_cols * 4.7)
-    fig_height = max(4.8, subplot_rows * 3.8)
-    fig, axes = plt.subplots(subplot_rows, subplot_cols, figsize=(fig_width, fig_height), dpi=140, squeeze=False)
-    fig.patch.set_facecolor(PLOT_BG)
+    cols_per_row = _as_int(controls.get("subplot_cols"), 2, minimum=1, maximum=4)
+    rows = math.ceil(len(columns) / cols_per_row)
 
-    for ax in axes.flatten():
-        ax.set_facecolor(PLOT_BG)
-
-    for idx, column in enumerate(columns):
-        ax = axes.flatten()[idx]
-        _draw_single_axis(ax, data, column, plot_type, column, controls, show_legend=(idx == 0))
-
-    for ax in axes.flatten()[len(columns) :]:
-        ax.remove()
-
-    fig.suptitle(f"Subplots: {plot_type.replace('_', ' ')}{title_suffix}", color=TEXT, fontsize=14, x=0.01, ha="left")
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
-    return _encode_figure(fig)
-
-
-def _matplotlib_grouped_kde(
-    data: pd.DataFrame,
-    value_col: str,
-    group_col: str,
-    title_suffix: str,
-    controls: dict[str, Any],
-) -> str:
-    fig, ax = _new_axes()
-    _draw_grouped_kde_axis(ax, data, value_col, group_col, f"KDE by {group_col}: {value_col}{title_suffix}", controls)
-    return _encode_figure(fig)
-
-
-def _matplotlib_grouped_box_or_violin(
-    data: pd.DataFrame,
-    value_col: str,
-    group_col: str,
-    plot_type: str,
-    title_suffix: str,
-    controls: dict[str, Any],
-) -> str:
-    fig, ax = _new_axes()
-    title = f"Violin by {group_col}: {value_col}{title_suffix}" if plot_type in {"grouped_violin", "violin"} else f"Box plot by {group_col}: {value_col}{title_suffix}"
-    _draw_grouped_box_or_violin_axis(ax, data, value_col, group_col, plot_type, title, controls)
-    return _encode_figure(fig)
-
-
-def _matplotlib_image(
-    data: pd.DataFrame,
-    column: str,
-    plot_type: str,
-    title_suffix: str,
-    controls: dict[str, Any],
-) -> str:
-    if _is_subplot_request(controls):
-        columns = _subplot_columns(data, column, controls)
-        if len(columns) > 1:
-            return _matplotlib_subplots_image(data, columns, plot_type, title_suffix, controls)
-
-    group_col = _group_column(controls)
-
-    if plot_type == "grouped_kde":
-        if not group_col:
-            raise ValueError("Choose a categorical column in Group by")
-        return _matplotlib_grouped_kde(data, column, group_col, title_suffix, controls)
-
-    if plot_type in {"grouped_box", "grouped_violin"}:
-        if not group_col:
-            raise ValueError("Choose a categorical column in Group by")
-        return _matplotlib_grouped_box_or_violin(data, column, group_col, plot_type, title_suffix, controls)
-
-    fig, ax = _new_axes()
-    _draw_single_axis(ax, data, column, plot_type, f"{_title_prefix(plot_type)}: {column}{title_suffix}", controls)
-    return _encode_figure(fig)
-
-
-def _title_prefix(plot_type: str) -> str:
-    return {
-        "histogram": "Histogram",
-        "kde": "KDE",
-        "box": "Box plot",
-        "violin": "Violin plot",
-        "bar_top_n": "Top labels",
-        "pie_top_n": "Top share",
-    }.get(plot_type, plot_type.replace("_", " ").title())
-
-
-def _plotly_grouped_kde(
-    data: pd.DataFrame,
-    value_col: str,
-    group_col: str,
-    controls: dict[str, Any],
-    title_suffix: str,
-) -> go.Figure:
-    frame, group_order = _grouped_numeric_frame(data, value_col, group_col, controls)
-    fig = go.Figure()
-    points = int(controls.get("points", 160))
-    bw_adjust = float(controls.get("bw_adjust", 1.0))
-    fill = "tozeroy" if controls.get("fill", False) else None
-
-    plotted = 0
-    for label in group_order:
-        values = frame.loc[frame["__group_label"].astype(str) == label, value_col].dropna().to_numpy()
-        if len(values) < 2:
-            continue
-        xs, ys = _kde(values, points, bw_adjust)
-        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", fill=fill, name=f"{label} ({len(values)})"))
-        plotted += 1
-
-    if plotted == 0:
-        raise ValueError("Grouped KDE needs at least one group with two numeric values")
-
-    fig.update_layout(
-        title=f"KDE by {group_col}: {value_col}{title_suffix}",
-        xaxis_title=value_col,
-        yaxis_title="density",
-    )
-    return fig
-
-
-def _plotly_grouped_box_or_violin(
-    data: pd.DataFrame,
-    value_col: str,
-    group_col: str,
-    plot_type: str,
-    controls: dict[str, Any],
-    title_suffix: str,
-) -> go.Figure:
-    frame, group_order = _grouped_numeric_frame(data, value_col, group_col, controls)
-    category_orders = {"__group_label": group_order}
-    points = "outliers" if controls.get("show_outliers", True) else False
-
-    if plot_type in {"grouped_violin", "violin"}:
-        fig = px.violin(
-            frame,
-            x="__group_label",
-            y=value_col,
-            color="__group_label",
-            category_orders=category_orders,
-            box=True,
-            points=points,
-        )
-        fig.update_layout(title=f"Violin by {group_col}: {value_col}{title_suffix}")
-    else:
-        fig = px.box(
-            frame,
-            x="__group_label",
-            y=value_col,
-            color="__group_label",
-            category_orders=category_orders,
-            points=points,
-        )
-        fig.update_layout(title=f"Box plot by {group_col}: {value_col}{title_suffix}")
-
-    fig.update_layout(xaxis_title=group_col, yaxis_title=value_col, showlegend=False)
-    return fig
-
-
-def _subplot_specs(plot_type: str, rows: int, cols: int) -> list[list[dict[str, str] | None]] | None:
-    if plot_type != "pie_top_n":
-        return None
-    return [[{"type": "domain"} for _ in range(cols)] for _ in range(rows)]
-
-
-def _plotly_add_single_subplot_trace(
-    fig: go.Figure,
-    data: pd.DataFrame,
-    column: str,
-    plot_type: str,
-    controls: dict[str, Any],
-    row: int,
-    col: int,
-    show_legend: bool,
-) -> None:
-    group_col = _group_column(controls)
-
-    if plot_type == "histogram":
-        values = pd.to_numeric(data[column], errors="coerce").dropna()
-        fig.add_trace(go.Histogram(x=values, nbinsx=int(controls.get("bins", 30)), name=column, showlegend=False), row=row, col=col)
-        return
-
-    if plot_type == "kde":
-        xs, ys = _kde(pd.to_numeric(data[column], errors="coerce").dropna().to_numpy(), int(controls.get("points", 160)), float(controls.get("bw_adjust", 1.0)))
-        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", fill="tozeroy" if controls.get("fill", True) else None, name=column, showlegend=False), row=row, col=col)
-        return
-
-    if plot_type == "grouped_kde":
-        if not group_col:
-            raise ValueError("Choose a categorical column in Group by")
-        frame, group_order = _grouped_numeric_frame(data, column, group_col, controls)
-        for label in group_order:
-            values = frame.loc[frame["__group_label"].astype(str) == label, column].dropna().to_numpy()
-            if len(values) < 2:
-                continue
-            xs, ys = _kde(values, int(controls.get("points", 160)), float(controls.get("bw_adjust", 1.0)))
-            fig.add_trace(
-                go.Scatter(
-                    x=xs,
-                    y=ys,
-                    mode="lines",
-                    fill="tozeroy" if controls.get("fill", False) else None,
-                    name=str(label),
-                    legendgroup=str(label),
-                    showlegend=show_legend,
-                ),
-                row=row,
-                col=col,
-            )
-        return
-
-    if plot_type in {"box", "grouped_box"}:
-        if group_col and group_col in data.columns:
-            frame, group_order = _grouped_numeric_frame(data, column, group_col, controls)
-            for label in group_order:
-                values = frame.loc[frame["__group_label"].astype(str) == label, column].dropna()
-                fig.add_trace(
-                    go.Box(y=values, name=str(label), legendgroup=str(label), showlegend=show_legend, boxpoints="outliers" if controls.get("show_outliers", True) else False),
-                    row=row,
-                    col=col,
-                )
-        else:
-            values = pd.to_numeric(data[column], errors="coerce").dropna()
-            fig.add_trace(go.Box(y=values, name=column, showlegend=False, boxpoints="outliers"), row=row, col=col)
-        return
-
-    if plot_type in {"violin", "grouped_violin"}:
-        if group_col and group_col in data.columns:
-            frame, group_order = _grouped_numeric_frame(data, column, group_col, controls)
-            for label in group_order:
-                values = frame.loc[frame["__group_label"].astype(str) == label, column].dropna()
-                fig.add_trace(
-                    go.Violin(y=values, name=str(label), legendgroup=str(label), showlegend=show_legend, box_visible=True, meanline_visible=True, points="outliers" if controls.get("show_outliers", True) else False),
-                    row=row,
-                    col=col,
-                )
-        else:
-            values = pd.to_numeric(data[column], errors="coerce").dropna()
-            fig.add_trace(go.Violin(y=values, name=column, showlegend=False, box_visible=True, meanline_visible=True, points="outliers"), row=row, col=col)
-        return
-
-    if plot_type == "bar_top_n":
-        top_n = int(controls.get("top_n", 15))
-        counts = data[column].astype("string").fillna("").value_counts().head(top_n).iloc[::-1]
-        fig.add_trace(go.Bar(x=counts.values, y=counts.index.astype(str), orientation="h", name=column, showlegend=False), row=row, col=col)
-        return
-
-    if plot_type == "pie_top_n":
-        top_n = int(controls.get("top_n", 10))
-        counts = data[column].astype("string").fillna("").value_counts().head(top_n)
-        fig.add_trace(go.Pie(labels=counts.index.astype(str), values=counts.values, name=column, showlegend=False), row=row, col=col)
-        return
-
-    raise ValueError(f"Unsupported plot type: {plot_type}")
-
-
-def _plotly_subplots_figure(
-    data: pd.DataFrame,
-    columns: list[str],
-    plot_type: str,
-    controls: dict[str, Any],
-    title_suffix: str,
-) -> go.Figure:
-    if len(columns) < 2:
-        raise ValueError("Choose at least two columns for subplot mode")
-
-    subplot_cols = min(_subplot_col_count(controls), len(columns))
-    subplot_rows = int(math.ceil(len(columns) / subplot_cols))
-    fig = make_subplots(
-        rows=subplot_rows,
-        cols=subplot_cols,
-        subplot_titles=columns,
-        specs=_subplot_specs(plot_type, subplot_rows, subplot_cols),
+    fig, axes = plt.subplots(
+        rows,
+        cols_per_row,
+        figsize=(5.8 * cols_per_row, 4.2 * rows),
+        squeeze=False,
     )
 
-    for index, column in enumerate(columns):
-        row = (index // subplot_cols) + 1
-        col = (index % subplot_cols) + 1
-        _plotly_add_single_subplot_trace(fig, data, column, plot_type, controls, row, col, show_legend=(index == 0))
+    flat_axes = axes.ravel()
 
-    fig.update_layout(
-        title=f"Subplots: {plot_type.replace('_', ' ')}{title_suffix}",
-        height=max(480, subplot_rows * 360),
-        showlegend=plot_type in GROUPED_NUMERIC_TYPES,
-    )
-    return fig
+    for ax, subplot_column in zip(flat_axes, columns):
+        _draw_one(ax, df, subplot_column, plot_type, {**controls, "subplot_enabled": False})
+
+    for ax in flat_axes[len(columns):]:
+        ax.axis("off")
+
+    fig.suptitle(f"{_safe_title(plot_type)} subplots", fontsize=14)
+    return _encode_figure(fig)
 
 
 def build_figure(
     df: pd.DataFrame,
     column: str,
     plot_type: str,
-    local_query: str | None = None,
+    local_query: str = "",
     controls: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if column not in df.columns:
-        raise ValueError(f"Column not found: {column}")
-
     controls = controls or {}
-    data = _apply_local_query(df, local_query)
-    title_suffix = f" — local filter: {local_query}" if local_query else ""
-    group_col = _group_column(controls)
+    plot_type = str(plot_type or "").strip()
 
-    if _is_subplot_request(controls):
-        columns = _subplot_columns(data, column, controls)
-        if len(columns) < 2:
-            raise ValueError("Choose at least two columns for subplot mode")
-        fig = _plotly_subplots_figure(data, columns, plot_type, controls, title_suffix)
-        return _style(fig, data, column, plot_type, title_suffix, controls)
+    if plot_type not in SUPPORTED_PLOT_TYPES:
+        raise ValueError(f"Unsupported plot type: {plot_type}")
 
-    if plot_type == "histogram":
-        bins = int(controls.get("bins", 30))
-        fig = px.histogram(data, x=column, nbins=bins, marginal=controls.get("marginal") or None)
-        if controls.get("show_kde", False):
-            xs, ys = _kde(pd.to_numeric(data[column], errors="coerce").dropna().to_numpy())
-            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name="KDE", yaxis="y2"))
-            fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "showgrid": False})
-        fig.update_layout(title=f"Histogram: {column}{title_suffix}")
-        return _style(fig, data, column, plot_type, title_suffix, controls)
+    plot_df = _apply_local_query(df, local_query)
+    _require_column(plot_df, column)
 
-    if plot_type == "kde":
-        points = int(controls.get("points", 160))
-        bw_adjust = float(controls.get("bw_adjust", 1.0))
-        xs, ys = _kde(pd.to_numeric(data[column], errors="coerce").dropna().to_numpy(), points, bw_adjust)
-        fig = go.Figure(go.Scatter(x=xs, y=ys, fill="tozeroy" if controls.get("fill", True) else None))
-        fig.update_layout(title=f"KDE: {column}{title_suffix}", xaxis_title=column, yaxis_title="density")
-        return _style(fig, data, column, plot_type, title_suffix, controls)
+    if _as_bool(controls.get("subplot_enabled"), False):
+        figure = _build_subplot_figure(plot_df, column, plot_type, controls)
+    else:
+        fig, ax = plt.subplots(figsize=(9.6, 5.8))
+        _draw_one(ax, plot_df, column, plot_type, controls)
+        figure = _encode_figure(fig)
 
-    if plot_type == "grouped_kde":
-        if not group_col:
-            raise ValueError("Choose a categorical column in Group by")
-        fig = _plotly_grouped_kde(data, column, group_col, controls, title_suffix)
-        return _style(fig, data, column, plot_type, title_suffix, controls)
-
-    if plot_type in {"box", "grouped_box"}:
-        if plot_type == "grouped_box" and not group_col:
-            raise ValueError("Choose a categorical column in Group by")
-        if group_col and group_col in data.columns:
-            fig = _plotly_grouped_box_or_violin(data, column, group_col, plot_type, controls, title_suffix)
-        else:
-            fig = px.box(data, x=column, points="outliers")
-            fig.update_layout(title=f"Box plot: {column}{title_suffix}")
-        return _style(fig, data, column, plot_type, title_suffix, controls)
-
-    if plot_type in {"violin", "grouped_violin"}:
-        if plot_type == "grouped_violin" and not group_col:
-            raise ValueError("Choose a categorical column in Group by")
-        if group_col and group_col in data.columns:
-            fig = _plotly_grouped_box_or_violin(data, column, group_col, plot_type, controls, title_suffix)
-        else:
-            fig = px.violin(data, y=column, box=True, points="outliers")
-            fig.update_layout(title=f"Violin plot: {column}{title_suffix}")
-        return _style(fig, data, column, plot_type, title_suffix, controls)
-
-    if plot_type == "bar_top_n":
-        top_n = int(controls.get("top_n", 15))
-        counts = data[column].astype("string").fillna("").value_counts().head(top_n)
-        plot_df = pd.DataFrame({"label": counts.index.astype(str), "count": counts.values})
-        fig = px.bar(plot_df, x="count", y="label", orientation="h")
-        fig.update_layout(title=f"Top {top_n} labels: {column}{title_suffix}", yaxis={"categoryorder": "total ascending"})
-        return _style(fig, data, column, plot_type, title_suffix, controls)
-
-    if plot_type == "pie_top_n":
-        top_n = int(controls.get("top_n", 10))
-        counts = data[column].astype("string").fillna("").value_counts().head(top_n)
-        plot_df = pd.DataFrame({"label": counts.index.astype(str), "count": counts.values})
-        fig = px.pie(plot_df, names="label", values="count")
-        fig.update_layout(title=f"Top {top_n} share: {column}{title_suffix}")
-        return _style(fig, data, column, plot_type, title_suffix, controls)
-
-    raise ValueError(f"Unsupported plot type: {plot_type}")
-
-
-def _style(
-    fig: go.Figure,
-    data: pd.DataFrame,
-    column: str,
-    plot_type: str,
-    title_suffix: str,
-    controls: dict[str, Any],
-) -> dict[str, Any]:
-    group_col = _group_column(controls)
-    columns = _subplot_columns(data, column, controls) if _is_subplot_request(controls) else [column]
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor=PLOT_BG,
-        plot_bgcolor=PLOT_BG,
-        font={"color": TEXT},
-        margin={"l": 54, "r": 28, "t": 58, "b": 48},
-        height=max(480, int(fig.layout.height or 480)),
+    figure.update(
+        {
+            "column": column,
+            "plot_type": plot_type,
+            "rows": int(len(plot_df)),
+            "controls": controls,
+        }
     )
-    payload = _as_json(fig)
-    payload["image"] = _matplotlib_image(data, column, plot_type, title_suffix, controls)
-    payload["renderer"] = "png"
-    payload["plot_meta"] = {
-        "plot_type": plot_type,
-        "primary_column": column,
-        "group_by": group_col,
-        "columns": [*columns, group_col] if group_col else columns,
-        "subplot_enabled": _is_subplot_request(controls),
-    }
-    return payload
+
+    return figure
 
 
-def _plotly_grouped_frame_code(source: str, value_col: str, group_col: str, controls: dict[str, Any]) -> list[str]:
-    limit = _group_limit(controls)
-    return [
-        f"plot_df = {source}[[{value_col!r}, {group_col!r}]].copy()",
-        f"plot_df[{value_col!r}] = pd.to_numeric(plot_df[{value_col!r}], errors='coerce')",
-        f"plot_df = plot_df.dropna(subset=[{value_col!r}])",
-        f"plot_df['__group_label'] = plot_df[{group_col!r}].astype('string').fillna('Missing').replace('', 'Missing')",
-        f"group_order = plot_df['__group_label'].value_counts().head({limit}).index.astype(str).tolist()",
-        "plot_df = plot_df[plot_df['__group_label'].astype(str).isin(group_order)].copy()",
-    ]
+def plotly_code(
+    plot_type: str,
+    df_var: str,
+    column: str,
+    local_query: str = "",
+    controls: dict[str, Any] | None = None,
+) -> str:
+    """
+    Notebook-export helper.
 
-
-def _subplot_columns_for_code(column: str, controls: dict[str, Any]) -> list[str]:
-    raw = controls.get("subplot_columns") or controls.get("columns") or []
-    if isinstance(raw, str):
-        raw_columns = [raw]
-    elif isinstance(raw, list):
-        raw_columns = raw
-    else:
-        raw_columns = []
-
-    columns: list[str] = []
-    for value in [column, *raw_columns]:
-        if isinstance(value, str) and value.strip() and value.strip() not in columns:
-            columns.append(value.strip())
-    return columns[: _subplot_limit(controls)]
-
-
-def _kde_code_lines(values_expr: str, points: int, bw_adjust: float, indent: str = "") -> list[str]:
-    return [
-        f"{indent}values = {values_expr}",
-        f"{indent}std = values.std(ddof=1) if len(values) > 1 else 1.0",
-        f"{indent}bandwidth = max(1.06 * std * (len(values) ** (-1 / 5)) * {bw_adjust!r}, 0.000001)",
-        f"{indent}padding = ((values.max() - values.min()) * 0.1) or 1.0",
-        f"{indent}xs = np.linspace(values.min() - padding, values.max() + padding, {points})",
-        f"{indent}scaled = (xs[:, None] - values[None, :]) / bandwidth",
-        f"{indent}ys = np.exp(-0.5 * scaled**2).sum(axis=1) / (len(values) * bandwidth * np.sqrt(2 * np.pi))",
-    ]
-
-
-def _plotly_subplot_code(plot_type: str, source: str, column: str, controls: dict[str, Any]) -> str:
-    columns = _subplot_columns_for_code(column, controls)
-    subplot_cols = min(_subplot_col_count(controls), len(columns))
-    subplot_rows = int(math.ceil(len(columns) / subplot_cols))
-    group_col = _group_column(controls)
-    lines: list[str] = []
-
-    lines.append(f"subplot_columns = {columns!r}")
-    if plot_type == "pie_top_n":
-        lines.append(f"subplot_specs = [[{{'type': 'domain'}} for _ in range({subplot_cols})] for _ in range({subplot_rows})]")
-        lines.append(f"fig = make_subplots(rows={subplot_rows}, cols={subplot_cols}, subplot_titles=subplot_columns, specs=subplot_specs)")
-    else:
-        lines.append(f"fig = make_subplots(rows={subplot_rows}, cols={subplot_cols}, subplot_titles=subplot_columns)")
-
-    lines.append("for index, plot_col in enumerate(subplot_columns):")
-    lines.append(f"    row = (index // {subplot_cols}) + 1")
-    lines.append(f"    col_num = (index % {subplot_cols}) + 1")
-
-    if plot_type == "histogram":
-        lines.append("    values = pd.to_numeric(" + source + "[plot_col], errors='coerce').dropna()")
-        lines.append(f"    fig.add_trace(go.Histogram(x=values, nbinsx={int(controls.get('bins', 30))}, name=plot_col, showlegend=False), row=row, col=col_num)")
-
-    elif plot_type == "kde":
-        lines.extend(_kde_code_lines(f"pd.to_numeric({source}[plot_col], errors='coerce').dropna().to_numpy()", int(controls.get("points", 160)), float(controls.get("bw_adjust", 1.0)), "    "))
-        fill = "'tozeroy'" if controls.get("fill", True) else "None"
-        lines.append(f"    fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines', fill={fill}, name=plot_col, showlegend=False), row=row, col=col_num)")
-
-    elif plot_type == "grouped_kde":
-        if not group_col:
-            lines.append("    # Grouped KDE was requested, but no group column was saved.")
-        else:
-            lines.append(f"    plot_df = {source}[[plot_col, {group_col!r}]].copy()")
-            lines.append("    plot_df[plot_col] = pd.to_numeric(plot_df[plot_col], errors='coerce')")
-            lines.append("    plot_df = plot_df.dropna(subset=[plot_col])")
-            lines.append(f"    plot_df['__group_label'] = plot_df[{group_col!r}].astype('string').fillna('Missing').replace('', 'Missing')")
-            lines.append(f"    group_order = plot_df['__group_label'].value_counts().head({_group_limit(controls)}).index.astype(str).tolist()")
-            lines.append("    for group_name in group_order:")
-            lines.append("        values = plot_df.loc[plot_df['__group_label'].astype(str) == group_name, plot_col].dropna().to_numpy()")
-            lines.append("        if len(values) < 2:")
-            lines.append("            continue")
-            lines.extend(_kde_code_lines("values", int(controls.get("points", 160)), float(controls.get("bw_adjust", 1.0)), "        "))
-            fill = "'tozeroy'" if controls.get("fill", False) else "None"
-            lines.append(f"        fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines', fill={fill}, name=str(group_name), legendgroup=str(group_name), showlegend=(index == 0)), row=row, col=col_num)")
-
-    elif plot_type in {"box", "grouped_box"}:
-        if group_col:
-            lines.append(f"    plot_df = {source}[[plot_col, {group_col!r}]].copy()")
-            lines.append("    plot_df[plot_col] = pd.to_numeric(plot_df[plot_col], errors='coerce')")
-            lines.append("    plot_df = plot_df.dropna(subset=[plot_col])")
-            lines.append(f"    plot_df['__group_label'] = plot_df[{group_col!r}].astype('string').fillna('Missing').replace('', 'Missing')")
-            lines.append(f"    group_order = plot_df['__group_label'].value_counts().head({_group_limit(controls)}).index.astype(str).tolist()")
-            lines.append("    for group_name in group_order:")
-            lines.append("        values = plot_df.loc[plot_df['__group_label'].astype(str) == group_name, plot_col].dropna()")
-            lines.append("        fig.add_trace(go.Box(y=values, name=str(group_name), legendgroup=str(group_name), showlegend=(index == 0), boxpoints='outliers'), row=row, col=col_num)")
-        else:
-            lines.append("    values = pd.to_numeric(" + source + "[plot_col], errors='coerce').dropna()")
-            lines.append("    fig.add_trace(go.Box(y=values, name=plot_col, showlegend=False, boxpoints='outliers'), row=row, col=col_num)")
-
-    elif plot_type in {"violin", "grouped_violin"}:
-        if group_col:
-            lines.append(f"    plot_df = {source}[[plot_col, {group_col!r}]].copy()")
-            lines.append("    plot_df[plot_col] = pd.to_numeric(plot_df[plot_col], errors='coerce')")
-            lines.append("    plot_df = plot_df.dropna(subset=[plot_col])")
-            lines.append(f"    plot_df['__group_label'] = plot_df[{group_col!r}].astype('string').fillna('Missing').replace('', 'Missing')")
-            lines.append(f"    group_order = plot_df['__group_label'].value_counts().head({_group_limit(controls)}).index.astype(str).tolist()")
-            lines.append("    for group_name in group_order:")
-            lines.append("        values = plot_df.loc[plot_df['__group_label'].astype(str) == group_name, plot_col].dropna()")
-            lines.append("        fig.add_trace(go.Violin(y=values, name=str(group_name), legendgroup=str(group_name), showlegend=(index == 0), box_visible=True, meanline_visible=True, points='outliers'), row=row, col=col_num)")
-        else:
-            lines.append("    values = pd.to_numeric(" + source + "[plot_col], errors='coerce').dropna()")
-            lines.append("    fig.add_trace(go.Violin(y=values, name=plot_col, showlegend=False, box_visible=True, meanline_visible=True, points='outliers'), row=row, col=col_num)")
-
-    elif plot_type == "bar_top_n":
-        lines.append(f"    counts = {source}[plot_col].astype('string').fillna('').value_counts().head({int(controls.get('top_n', 15))}).iloc[::-1]")
-        lines.append("    fig.add_trace(go.Bar(x=counts.values, y=counts.index.astype(str), orientation='h', name=plot_col, showlegend=False), row=row, col=col_num)")
-
-    elif plot_type == "pie_top_n":
-        lines.append(f"    counts = {source}[plot_col].astype('string').fillna('').value_counts().head({int(controls.get('top_n', 10))})")
-        lines.append("    fig.add_trace(go.Pie(labels=counts.index.astype(str), values=counts.values, name=plot_col, showlegend=False), row=row, col=col_num)")
-
-    else:
-        lines.append(f"    # Unsupported subplot plot type: {plot_type}")
-
-    lines.append(f"fig.update_layout(title='Subplots: {plot_type.replace('_', ' ')}', height=max(480, {subplot_rows} * 360), template='plotly_dark')")
-    lines.append("fig.show()")
-    return "\n".join(lines)
-
-
-def plotly_code(plot_type: str, df_var: str, column: str, local_query: str, controls: dict[str, Any]) -> str:
-    source = df_var
-    lines: list[str] = []
-
-    if local_query:
-        filtered_name = f"{df_var}_plot"
-        lines.append(f"{filtered_name} = {df_var}.query({local_query!r})")
-        source = filtered_name
-
-    if _is_subplot_request(controls):
-        subplot_code = _plotly_subplot_code(plot_type, source, column, controls)
-        if lines:
-            return "\n".join(lines) + "\n" + subplot_code
-        return subplot_code
-
-    col = repr(column)
-    group_col = _group_column(controls)
-
-    if plot_type == "histogram":
-        bins = int(controls.get("bins", 30))
-        lines.append(f"fig = px.histogram({source}, x={col}, nbins={bins})")
-        if controls.get("show_kde", False):
-            lines.extend(_kde_code_lines(f"pd.to_numeric({source}[{col}], errors='coerce').dropna().to_numpy()", 160, 1.0))
-            lines.append("fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines', name='KDE', yaxis='y2'))")
-            lines.append("fig.update_layout(yaxis2={'overlaying': 'y', 'side': 'right', 'showgrid': False})")
-
-    elif plot_type == "kde":
-        points = int(controls.get("points", 160))
-        bw_adjust = float(controls.get("bw_adjust", 1.0))
-        fill = "'tozeroy'" if controls.get("fill", True) else "None"
-        lines.extend(_kde_code_lines(f"pd.to_numeric({source}[{col}], errors='coerce').dropna().to_numpy()", points, bw_adjust))
-        lines.append(f"fig = go.Figure(go.Scatter(x=xs, y=ys, fill={fill}))")
-
-    elif plot_type == "grouped_kde":
-        if not group_col:
-            lines.append("# Grouped KDE was requested, but no group column was saved.")
-            lines.append("fig = go.Figure()")
-        else:
-            points = int(controls.get("points", 160))
-            bw_adjust = float(controls.get("bw_adjust", 1.0))
-            fill = "'tozeroy'" if controls.get("fill", False) else "None"
-            lines.extend(_plotly_grouped_frame_code(source, column, group_col, controls))
-            lines.append("fig = go.Figure()")
-            lines.append("for group_name in group_order:")
-            lines.append(f"    values = plot_df.loc[plot_df['__group_label'].astype(str) == group_name, {col}].dropna().to_numpy()")
-            lines.append("    if len(values) < 2:")
-            lines.append("        continue")
-            lines.extend(_kde_code_lines("values", points, bw_adjust, "    "))
-            lines.append(f"    fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines', fill={fill}, name=f'{{group_name}} ({{len(values)}})'))")
-            lines.append(f"fig.update_layout(title='KDE by {group_col}: {column}', xaxis_title={col}, yaxis_title='density')")
-
-    elif plot_type in {"box", "grouped_box"}:
-        if group_col:
-            lines.extend(_plotly_grouped_frame_code(source, column, group_col, controls))
-            lines.append("fig = px.box(plot_df, x='__group_label', y=" + col + ", color='__group_label', category_orders={'__group_label': group_order}, points='outliers')")
-            lines.append(f"fig.update_layout(xaxis_title={group_col!r}, yaxis_title={col}, showlegend=False)")
-        else:
-            lines.append(f"fig = px.box({source}, x={col}, points='outliers')")
-
-    elif plot_type in {"violin", "grouped_violin"}:
-        if group_col:
-            lines.extend(_plotly_grouped_frame_code(source, column, group_col, controls))
-            lines.append("fig = px.violin(plot_df, x='__group_label', y=" + col + ", color='__group_label', category_orders={'__group_label': group_order}, box=True, points='outliers')")
-            lines.append(f"fig.update_layout(xaxis_title={group_col!r}, yaxis_title={col}, showlegend=False)")
-        else:
-            lines.append(f"fig = px.violin({source}, y={col}, box=True, points='outliers')")
-
-    elif plot_type == "bar_top_n":
-        top_n = int(controls.get("top_n", 15))
-        lines.append(f"counts = {source}[{col}].astype('string').fillna('').value_counts().head({top_n})")
-        lines.append("plot_df = pd.DataFrame({'label': counts.index.astype(str), 'count': counts.values})")
-        lines.append("fig = px.bar(plot_df, x='count', y='label', orientation='h')")
-
-    elif plot_type == "pie_top_n":
-        top_n = int(controls.get("top_n", 10))
-        lines.append(f"counts = {source}[{col}].astype('string').fillna('').value_counts().head({top_n})")
-        lines.append("plot_df = pd.DataFrame({'label': counts.index.astype(str), 'count': counts.values})")
-        lines.append("fig = px.pie(plot_df, names='label', values='count')")
-
-    else:
-        lines.append(f"# Unsupported plot type: {plot_type}")
-        lines.append("fig = go.Figure()")
-
-    lines.append("fig.show()")
-    return "\n".join(lines)
+    The app preview uses matplotlib-rendered PNGs. Exported notebooks call the same
+    build_figure function so every UI option, including numeric Top-N and subplots,
+    is recreated consistently.
+    """
+    return (
+        "from base64 import b64decode\n"
+        "from IPython.display import Image, display\n"
+        "from danaleo.core.plots import build_figure\n\n"
+        f"_danaleo_plot = build_figure(\n"
+        f"    {df_var},\n"
+        f"    column={column!r},\n"
+        f"    plot_type={plot_type!r},\n"
+        f"    local_query={local_query!r},\n"
+        f"    controls={controls or {}!r},\n"
+        f")\n"
+        "_danaleo_png = _danaleo_plot['image'].split(',', 1)[1]\n"
+        "display(Image(data=b64decode(_danaleo_png)))"
+    )

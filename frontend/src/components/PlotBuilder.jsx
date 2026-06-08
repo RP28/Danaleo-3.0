@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-
-import { api } from '../api.js';
 import { Save, SlidersHorizontal } from 'lucide-react';
+import { api } from '../api.js';
 
 const numericPlotTypes = [
   ['histogram', 'Histogram'],
   ['kde', 'KDE'],
   ['box', 'Box plot'],
   ['violin', 'Violin plot'],
+  ['bar_top_n', 'Top-N bar'],
+  ['pie_top_n', 'Top-N pie'],
   ['grouped_kde', 'KDE by category'],
   ['grouped_box', 'Box by category'],
   ['grouped_violin', 'Violin by category']
@@ -20,6 +21,7 @@ const categoricalPlotTypes = [
 
 const groupedPlotTypes = new Set(['grouped_kde', 'grouped_box', 'grouped_violin']);
 const kdePlotTypes = new Set(['kde', 'grouped_kde']);
+const topNPlotTypes = new Set(['bar_top_n', 'pie_top_n']);
 
 function defaultControls() {
   return {
@@ -62,7 +64,7 @@ export default function PlotBuilder({
   const [title, setTitle] = useState('');
   const [remark, setRemark] = useState('');
   const [include, setInclude] = useState(true);
-  const [controls, setControls] = useState(defaultControls);
+  const [controls, setControls] = useState(() => defaultControls());
 
   const groupOptions = useMemo(() => {
     return categoricalColumns.filter((c) => c !== column);
@@ -73,17 +75,21 @@ export default function PlotBuilder({
   }, [categoricalColumns, numericColumns, stats?.kind]);
 
   const selectedSubplotColumns = useMemo(() => {
-    return uniqueValues([column, ...(controls.subplot_columns || [])]).filter((c) => subplotOptions.includes(c));
+    return uniqueValues([column, ...(controls.subplot_columns || [])]).filter((c) =>
+      subplotOptions.includes(c)
+    );
   }, [column, controls.subplot_columns, subplotOptions]);
 
   const canUseGroupedPlots = stats?.kind === 'numeric' && groupOptions.length > 0;
   const canUseSubplots = subplotOptions.length > 1;
   const isGroupedPlot = groupedPlotTypes.has(plotType);
   const isKdePlot = kdePlotTypes.has(plotType);
+  const isTopNPlot = topNPlotTypes.has(plotType);
 
   useEffect(() => {
     const nextTypes = stats?.kind === 'numeric' ? numericPlotTypes : categoricalPlotTypes;
     const nextDefault = nextTypes[0]?.[0] || 'histogram';
+
     if (!nextTypes.some(([key]) => key === plotType)) {
       setPlotType(nextDefault);
     }
@@ -102,9 +108,9 @@ export default function PlotBuilder({
 
   if (!column || !stats) {
     return (
-      <section className="plot-builder empty-canvas">
+      <section className="plot-builder">
         <h2>Select a column to begin</h2>
-        <p>Plots, saved charts, and notebook export options will appear here.</p>
+        <p className="muted">Plots, saved charts, and notebook export options will appear here.</p>
       </section>
     );
   }
@@ -115,12 +121,16 @@ export default function PlotBuilder({
 
   function toggleSubplotColumn(nextColumn) {
     if (nextColumn === column) return;
+
     setControls((prev) => {
       const current = prev.subplot_columns || [];
       const exists = current.includes(nextColumn);
+
       return {
         ...prev,
-        subplot_columns: exists ? current.filter((c) => c !== nextColumn) : [...current, nextColumn]
+        subplot_columns: exists
+          ? current.filter((c) => c !== nextColumn)
+          : [...current, nextColumn]
       };
     });
   }
@@ -136,11 +146,23 @@ export default function PlotBuilder({
       throw new Error('Choose a categorical column in Group by');
     }
 
+    if (isGroupedPlot && !canUseGroupedPlots) {
+      throw new Error('Grouped plots need at least one categorical column');
+    }
+
+    if (isTopNPlot && Number(nextControls.top_n) < 1) {
+      throw new Error('Top N must be at least 1');
+    }
+
     if (nextControls.subplot_enabled) {
-      const selected = uniqueValues([column, ...(nextControls.subplot_columns || [])]).filter((c) => subplotOptions.includes(c));
+      const selected = uniqueValues([column, ...(nextControls.subplot_columns || [])]).filter((c) =>
+        subplotOptions.includes(c)
+      );
+
       if (selected.length < 2) {
         throw new Error('Choose at least two columns for subplot mode');
       }
+
       nextControls.subplot_columns = selected;
     } else {
       nextControls.subplot_columns = [];
@@ -176,6 +198,7 @@ export default function PlotBuilder({
         remark,
         title
       });
+
       onSaved(data);
       setRemark('');
       setTitle('');
@@ -188,25 +211,35 @@ export default function PlotBuilder({
     <section className="plot-builder">
       <div className="builder-header">
         <div>
-          <p className="eyebrow"><SlidersHorizontal size={13}/> Local plot builder</p>
+          <p className="eyebrow">
+            <SlidersHorizontal size={14} /> Local plot builder
+          </p>
           <h2>{column}</h2>
         </div>
 
         <div className="row compact">
           <select value={plotType} onChange={(e) => setPlotType(e.target.value)}>
             {actualTypes.map(([key, label]) => (
-              <option value={key} key={key} disabled={groupedPlotTypes.has(key) && !canUseGroupedPlots}>
-                {label}{groupedPlotTypes.has(key) && !canUseGroupedPlots ? ' (needs categorical column)' : ''}
+              <option key={key} value={key} disabled={groupedPlotTypes.has(key) && !canUseGroupedPlots}>
+                {label}
+                {groupedPlotTypes.has(key) && !canUseGroupedPlots ? ' (needs categorical column)' : ''}
               </option>
             ))}
           </select>
-          <button className="primary-btn" onClick={preview}>Preview</button>
-          <button className="ghost-btn" onClick={save}><Save size={15}/> Save</button>
+
+          <button className="ghost-btn" type="button" onClick={preview}>
+            Preview
+          </button>
+
+          <button className="primary-btn" type="button" onClick={save}>
+            <Save size={16} /> Save
+          </button>
         </div>
       </div>
 
       <div className="builder-controls">
-        <label className="wide-control">Local filter query
+        <label className="wide-control">
+          Local filter query
           <input
             value={localQuery}
             onChange={(e) => setLocalQuery(e.target.value)}
@@ -215,10 +248,12 @@ export default function PlotBuilder({
         </label>
 
         {plotType === 'histogram' && (
-          <label>Bins
+          <label>
+            Bins
             <input
               type="number"
               min="2"
+              max="200"
               value={controls.bins}
               onChange={(e) => updateControl('bins', Number(e.target.value))}
             />
@@ -231,15 +266,18 @@ export default function PlotBuilder({
               type="checkbox"
               checked={!!controls.show_kde}
               onChange={(e) => updateControl('show_kde', e.target.checked)}
-            /> show KDE
+            />
+            show KDE
           </label>
         )}
 
         {isKdePlot && (
-          <label>Bandwidth
+          <label>
+            Bandwidth
             <input
               type="number"
               min="0.1"
+              max="5"
               step="0.1"
               value={controls.bw_adjust}
               onChange={(e) => updateControl('bw_adjust', Number(e.target.value))}
@@ -248,10 +286,12 @@ export default function PlotBuilder({
         )}
 
         {isKdePlot && (
-          <label>Points
+          <label>
+            Points
             <input
               type="number"
-              min="50"
+              min="40"
+              max="500"
               value={controls.points}
               onChange={(e) => updateControl('points', Number(e.target.value))}
             />
@@ -264,24 +304,34 @@ export default function PlotBuilder({
               type="checkbox"
               checked={!!controls.fill}
               onChange={(e) => updateControl('fill', e.target.checked)}
-            /> fill curve
+            />
+            fill curve
           </label>
         )}
 
         {isGroupedPlot && (
-          <label>Group by
-            <select value={controls.group_by} onChange={(e) => updateControl('group_by', e.target.value)}>
+          <label>
+            Group by
+            <select
+              value={controls.group_by}
+              onChange={(e) => updateControl('group_by', e.target.value)}
+            >
               <option value="">Choose category</option>
-              {groupOptions.map((c) => <option value={c} key={c}>{c}</option>)}
+              {groupOptions.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
             </select>
           </label>
         )}
 
         {isGroupedPlot && (
-          <label>Max groups
+          <label>
+            Max groups
             <input
               type="number"
-              min="1"
+              min="2"
               max="30"
               value={controls.group_limit}
               onChange={(e) => updateControl('group_limit', Number(e.target.value))}
@@ -295,12 +345,14 @@ export default function PlotBuilder({
               type="checkbox"
               checked={!!controls.show_outliers}
               onChange={(e) => updateControl('show_outliers', e.target.checked)}
-            /> show outliers
+            />
+            show outliers
           </label>
         )}
 
-        {(plotType === 'bar_top_n' || plotType === 'pie_top_n') && (
-          <label>Top N
+        {isTopNPlot && (
+          <label>
+            Top N
             <input
               type="number"
               min="1"
@@ -312,73 +364,95 @@ export default function PlotBuilder({
         )}
       </div>
 
-      <details className="soft-details">
-        <summary>Subplot mode</summary>
-        <div className="builder-controls">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={!!controls.subplot_enabled}
-              disabled={!canUseSubplots}
-              onChange={(e) => updateControl('subplot_enabled', e.target.checked)}
-            /> compare multiple columns as subplots
-          </label>
+      {canUseSubplots && (
+        <details className="soft-details">
+          <summary>Subplot mode</summary>
 
-          {controls.subplot_enabled && (
-            <label>Columns per row
+          <div className="builder-controls">
+            <label className="check">
               <input
-                type="number"
-                min="1"
-                max="6"
-                value={controls.subplot_cols}
-                onChange={(e) => updateControl('subplot_cols', Number(e.target.value))}
+                type="checkbox"
+                checked={!!controls.subplot_enabled}
+                onChange={(e) => updateControl('subplot_enabled', e.target.checked)}
               />
+              compare multiple columns as subplots
             </label>
-          )}
+
+            {controls.subplot_enabled && (
+              <label>
+                Columns per row
+                <input
+                  type="number"
+                  min="1"
+                  max="4"
+                  value={controls.subplot_cols}
+                  onChange={(e) => updateControl('subplot_cols', Number(e.target.value))}
+                />
+              </label>
+            )}
+
+            {controls.subplot_enabled && (
+              <label>
+                Max subplots
+                <input
+                  type="number"
+                  min="2"
+                  max="30"
+                  value={controls.subplot_limit}
+                  onChange={(e) => updateControl('subplot_limit', Number(e.target.value))}
+                />
+              </label>
+            )}
+          </div>
 
           {controls.subplot_enabled && (
-            <label>Max subplots
-              <input
-                type="number"
-                min="2"
-                max="50"
-                value={controls.subplot_limit}
-                onChange={(e) => updateControl('subplot_limit', Number(e.target.value))}
-              />
-            </label>
-          )}
+            <div className="stack separated">
+              <p className="muted">Selected columns: {selectedSubplotColumns.length}</p>
 
-          {controls.subplot_enabled && (
-            <div className="wide-control">
-              <p className="muted-note">Selected columns: {selectedSubplotColumns.length}</p>
-              <div className="column-check-grid">
+              <div className="builder-controls">
                 {subplotOptions.map((c) => (
                   <label className="check" key={c}>
                     <input
                       type="checkbox"
-                      checked={c === column || (controls.subplot_columns || []).includes(c)}
+                      checked={selectedSubplotColumns.includes(c)}
                       disabled={c === column}
                       onChange={() => toggleSubplotColumn(c)}
-                    /> {c}{c === column ? ' (current)' : ''}
+                    />
+                    {c}
+                    {c === column ? ' (current)' : ''}
                   </label>
                 ))}
               </div>
             </div>
           )}
-        </div>
-      </details>
+        </details>
+      )}
 
       <details className="soft-details">
         <summary>Export settings for this plot</summary>
+
         <div className="builder-controls">
-          <label className="wide-control">Saved plot title
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional title"/>
+          <label className="wide-control">
+            Saved plot title
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Optional title"
+            />
           </label>
+
           <label className="check">
-            <input type="checkbox" checked={include} onChange={(e) => setInclude(e.target.checked)}/> include in notebook export
+            <input checked={include} onChange={(e) => setInclude(e.target.checked)} type="checkbox" />
+            include in notebook export
           </label>
-          <label className="wide-control">Remarks
-            <textarea value={remark} onChange={(e) => setRemark(e.target.value)} placeholder="Optional notes to export as markdown"/>
+
+          <label className="wide-control">
+            Remarks
+            <textarea
+              value={remark}
+              onChange={(e) => setRemark(e.target.value)}
+              placeholder="Optional notes to export as markdown"
+            />
           </label>
         </div>
       </details>
@@ -388,7 +462,11 @@ export default function PlotBuilder({
           <img className="plot-image" src={figure.image} alt={`${plotType} preview for ${column}`} />
         </div>
       ) : (
-        <div className="preview-placeholder">Preview appears here. Local filters only affect this plot, not the session dataframe.</div>
+        <div className="preview-placeholder">
+          Preview appears here.
+          <br />
+          Local filters only affect this plot, not the session dataframe.
+        </div>
       )}
     </section>
   );
