@@ -22,123 +22,132 @@ Requires-Dist: ruff>=0.6; extra == "dev"
 
 # Danaleo 3.0
 
-A local-hosted interactive EDA package for CSV files.
+A local interactive EDA workspace for CSV files.
 
-The package runs a Python FastAPI server for dataframe operations and a React UI for the workspace. The first phase supports one CSV upload at a time, multiple dataframe sessions, global session operations, local plot filters, saved plots, a session tree, and notebook export.
+Danaleo runs a Python FastAPI backend and a React UI on localhost. It supports CSV upload, column statistics, dataframe sessions, filters, column operations, plots, saved plots, a session tree, and notebook export.
 
-## What is included
+## Requirements
 
-- Upload one CSV file and then hide the upload UI.
-- Optional random sampling at upload time for very large files.
-- Column list with dtype, missing percentage, and unique count.
-- Column stats for numeric and categorical columns.
-- Global operations inside the active session:
-  - filter rows using `pandas.DataFrame.query`
-  - drop a column
-  - replace values in a selected column
-- Session creation, activation, renaming, and deletion directly inside the session tree node UI. The `+` button still creates a child session immediately; use the pencil icon or double-click the name to rename it.
-- A session tree with session and operation nodes using React Flow curved edges.
-- Plot builder:
-  - numeric: histogram, KDE, box plot, violin plot
-  - categorical: top-N bar chart, top-N pie chart
-- Local plot query that does not mutate the session dataframe.
-- Saved plot cards that remain visible when switching sessions.
-- Include/exclude saved plots in the exported notebook.
-- Per-plot remarks exported as Markdown cells.
-- Notebook export that recreates session copies, operations, and selected plots.
+* Python 3.10+
+* Node.js/npm only if the UI needs to be rebuilt
 
-## Project layout
+## Setup
 
-```text
-danaleo-3.0/
-├── pyproject.toml
-├── README.md
-├── scripts/
-│   └── bootstrap_mac.sh
-├── src/danaleo/
-│   ├── cli.py
-│   ├── core/
-│   │   ├── exporter.py
-│   │   ├── operations.py
-│   │   ├── plots.py
-│   │   ├── session_store.py
-│   │   └── stats.py
-│   └── server/
-│       ├── app.py
-│       ├── models.py
-│       └── static/
-└── frontend/
-    ├── package.json
-    ├── index.html
-    └── src/
+Clone the repo:
+
+```bash
+git clone https://github.com/RP28/Danaleo-3.0.git
+cd Danaleo-3.0
 ```
 
-## Mac setup
-
-From this folder:
+Create and activate a virtual environment:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+```
+
+Install Danaleo and all Python dependencies:
+
+```bash
+python3 -m pip install -e .
+```
+
+## Run
+
+Start Danaleo with:
+
+```bash
+python3 -m danaleo.main
+```
+
+Or use the installed CLI command:
+
+```bash
 danaleo
 ```
 
-After the first setup, you normally only need:
+Then open:
 
-```bash
-source .venv/bin/activate
-danaleo
+```text
+http://127.0.0.1:8765
 ```
 
-Open the printed URL if your browser does not open automatically.
+If the browser does not open automatically, copy the printed URL into your browser.
 
-## Tests
+## If the port is already in use
 
-After installing the Python dev dependencies, run the backend and regression tests with:
+Run on another port:
 
 ```bash
-python -m pytest
+danaleo --port 8766
 ```
 
-The test suite covers CSV upload state, sampling, session create/activate/rename/delete, branch deletion, dataframe operations, column stats, plot previews, saved plots, notebook export, API routes, and a frontend regression check for the tree rename submit/tick button.
+Or stop the old process:
 
-Rebuild the packaged frontend after UI changes with:
+```bash
+kill -9 $(lsof -ti :8765)
+```
+
+## Rebuild the UI
+
+Normally, users should not need to do this.
+
+Only run this after changing frontend code or if the static UI is missing:
 
 ```bash
 cd frontend
 npm install
 npm run build
+cd ..
 ```
 
-## Development mode
+The UI build is written into:
 
-Run the backend:
+```text
+src/danaleo/server/static/
+```
+
+## Development
+
+Run backend only:
 
 ```bash
-source .venv/bin/activate
 danaleo --no-browser
 ```
 
-Run the frontend dev server in another terminal:
+For frontend development, run the React dev server in another terminal:
 
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-In development, the React app calls `http://127.0.0.1:8765` for API requests.
+## Tests
+
+Install dev dependencies:
+
+```bash
+python3 -m pip install -e ".[dev]"
+```
+
+Run tests:
+
+```bash
+python3 -m pytest
+```
 
 ## Query examples
 
-For a column with spaces, wrap the column name in backticks:
-
-```python
-`Age Years` >= 18
-```
-
-For a normal column name:
+For normal column names:
 
 ```python
 age >= 18 and income > 0
+```
+
+For column names with spaces:
+
+```python
+`Age Years` >= 18
 ```

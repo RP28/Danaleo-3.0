@@ -138,6 +138,34 @@ def test_api_end_to_end_workspace_flow(csv_bytes: bytes):
     assert updated_plot.json()["saved_plots"][0]["include_in_export"] is False
     assert updated_plot.json()["saved_plots"][0]["remark"] == "Skip it"
 
+    progress_response = client.get("/api/progress/download")
+    assert progress_response.status_code == 200
+    assert progress_response.headers["content-disposition"].endswith(
+        'filename="customers.danaleo"'
+    )
+
+    reset = client.post("/api/workspace/reset")
+    assert reset.status_code == 200
+    assert reset.json()["ready"] is False
+
+    restored = client.post(
+        "/api/progress/load",
+        files={
+            "file": (
+                "customers.danaleo",
+                progress_response.content,
+                "application/vnd.danaleo.project+zip",
+            )
+        },
+    )
+    assert restored.status_code == 200
+    assert restored.json()["active_session_id"] == base_id
+    assert restored.json()["saved_plots"][0]["title"] == "Age preview"
+
+    deleted_plot = client.delete(f"/api/plots/{plot['id']}")
+    assert deleted_plot.status_code == 200
+    assert deleted_plot.json()["saved_plots"] == []
+
     export_response = client.get("/api/export/notebook")
     assert export_response.status_code == 200
     assert export_response.headers["content-disposition"].endswith(
@@ -201,6 +229,17 @@ def test_api_operation_and_plot_error_edges(csv_bytes: bytes):
     )
     assert missing_plot_update.status_code == 400
     assert "Plot not found" in missing_plot_update.json()["detail"]
+
+    missing_plot_delete = client.delete("/api/plots/missing")
+    assert missing_plot_delete.status_code == 400
+    assert "Plot not found" in missing_plot_delete.json()["detail"]
+
+    bad_progress = client.post(
+        "/api/progress/load",
+        files={"file": ("not_progress.csv", csv_bytes, "text/csv")},
+    )
+    assert bad_progress.status_code == 400
+    assert ".danaleo" in bad_progress.json()["detail"]
 
 
 def test_frontend_assets_are_served_without_browser_cache():

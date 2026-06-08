@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 
@@ -71,21 +74,15 @@ class WorkspaceStore:
         self.time_counter += 1
         return self.time_counter
 
-    def load_csv(
+    def _read_csv_with_sampling(
         self,
-        file_bytes: bytes,
-        filename: str,
+        csv_path: str,
         sample_mode: str = "none",
         sample_n: int | None = None,
         sample_frac: float | None = None,
         random_state: int = 42,
-    ) -> dict[str, Any]:
-        suffix = Path(filename).suffix or ".csv"
-        with NamedTemporaryFile(delete=False, suffix=suffix, prefix="danaleo_") as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-
-        df = pd.read_csv(tmp_path)
+    ) -> tuple[pd.DataFrame, dict[str, Any] | None]:
+        df = pd.read_csv(csv_path)
         sample_info: dict[str, Any] | None = None
         original_rows = len(df)
         if sample_mode == "n" and sample_n and sample_n > 0 and sample_n < len(df):
@@ -104,6 +101,29 @@ class WorkspaceStore:
                 "random_state": random_state,
                 "original_rows": int(original_rows),
             }
+        return df, sample_info
+
+    def load_csv(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        sample_mode: str = "none",
+        sample_n: int | None = None,
+        sample_frac: float | None = None,
+        random_state: int = 42,
+    ) -> dict[str, Any]:
+        suffix = Path(filename).suffix or ".csv"
+        with NamedTemporaryFile(delete=False, suffix=suffix, prefix="danaleo_") as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
+        df, sample_info = self._read_csv_with_sampling(
+            tmp_path,
+            sample_mode,
+            sample_n,
+            sample_frac,
+            random_state,
+        )
 
         self.reset()
         self.csv_path = tmp_path
@@ -297,6 +317,214 @@ class WorkspaceStore:
             plot.include_in_export = include_in_export
         if remark is not None:
             plot.remark = remark
+        return self.workspace_summary()
+
+    def delete_plot(self, plot_id: str) -> dict[str, Any]:
+        if plot_id not in self.saved_plots:
+            raise ValueError("Plot not found")
+        self.saved_plots.pop(plot_id)
+        return self.workspace_summary()
+
+    def _project_manifest(self) -> dict[str, Any]:
+        if not self.ready:
+            raise ValueError("Upload a CSV file first")
+        return {
+            "format": "danaleo.project",
+            "version": 1,
+            "csv_name": self.csv_name,
+            "sample_info": self.sample_info,
+            "active_session_id": self.active_session_id,
+            "time_counter": self.time_counter,
+            "sessions": [
+                {
+                    "id": session.id,
+                    "name": session.name,
+                    "parent_id": session.parent_id,
+                    "created_time": session.created_time,
+                    "created_overview": session.created_overview,
+                    "source_operation_id": session.source_operation_id,
+                    "operations": [op.__dict__ for op in session.operations],
+                }
+                for session in sorted(self.sessions.values(), key=lambda item: item.created_time)
+            ],
+            "saved_plots": [
+                {
+                    "id": plot.id,
+                    "session_id": plot.session_id,
+                    "session_name": plot.session_name,
+                    "column": plot.column,
+                    "plot_type": plot.plot_type,
+                    "local_query": plot.local_query,
+                    "controls": plot.controls,
+                    "include_in_export": plot.include_in_export,
+                    "remark": plot.remark,
+                    "created_time": plot.created_time,
+                    "title": plot.title,
+                }
+                for plot in sorted(self.saved_plots.values(), key=lambda item: item.created_time)
+            ],
+        }
+
+    def export_project(self) -> bytes:
+        if not self.ready:
+            raise ValueError("Upload a CSV file first")
+        if not self.csv_path or not Path(self.csv_path).exists():
+            raise ValueError("Source CSV is no longer available")
+
+        buffer = BytesIO()
+        with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", json.dumps(self._project_manifest(), indent=2))
+            archive.write(self.csv_path, "source.csv")
+        return buffer.getvalue()
+
+    def import_project(self, project_bytes: bytes) -> dict[str, Any]:
+        with ZipFile(BytesIO(project_bytes)) as archive:
+            try:
+                manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+                source_bytes = archive.read("source.csv")
+            except KeyError as exc:
+                raise ValueError("Saved progress file is missing required project data") from exc
+
+        if manifest.get("format") != "danaleo.project" or manifest.get("version") != 1:
+            raise ValueError("Unsupported saved progress file")
+
+        csv_name = str(manifest.get("csv_name") or "source.csv")
+        suffix = Path(csv_name).suffix or ".csv"
+        with NamedTemporaryFile(delete=False, suffix=suffix, prefix="danaleo_") as tmp:
+            tmp.write(source_bytes)
+            tmp_path = tmp.name
+
+        sample_info = manifest.get("sample_info")
+        if sample_info:
+            mode = sample_info.get("mode", "none")
+            df, restored_sample_info = self._read_csv_with_sampling(
+                tmp_path,
+                mode,
+                sample_info.get("sample_n"),
+                sample_info.get("sample_frac"),
+                sample_info.get("random_state", 42),
+            )
+            if restored_sample_info:
+                restored_sample_info["original_rows"] = sample_info.get(
+                    "original_rows",
+                    restored_sample_info["original_rows"],
+                )
+        else:
+            df, restored_sample_info = self._read_csv_with_sampling(tmp_path)
+
+        raw_sessions = manifest.get("sessions") or []
+        if not raw_sessions:
+            raise ValueError("Saved progress file does not contain any sessions")
+
+        records: dict[str, SessionRecord] = {}
+        for raw in raw_sessions:
+            operations = [
+                OperationRecord(
+                    id=str(op["id"]),
+                    operation_type=str(op["operation_type"]),
+                    label=str(op["label"]),
+                    params=dict(op.get("params") or {}),
+                    time=int(op["time"]),
+                )
+                for op in raw.get("operations", [])
+            ]
+            record = SessionRecord(
+                id=str(raw["id"]),
+                name=str(raw["name"]),
+                parent_id=raw.get("parent_id"),
+                created_time=int(raw["created_time"]),
+                created_overview=dict(raw.get("created_overview") or {}),
+                source_operation_id=raw.get("source_operation_id"),
+                operations=operations,
+                data=pd.DataFrame(),
+            )
+            records[record.id] = record
+
+        materialized: dict[tuple[str, str | None], pd.DataFrame] = {}
+
+        def build_session_data(session_id: str, stop_operation_id: str | None = None) -> pd.DataFrame:
+            cache_key = (session_id, stop_operation_id)
+            if cache_key in materialized:
+                return materialized[cache_key].copy()
+
+            if session_id not in records:
+                raise ValueError("Saved progress file references a missing session")
+
+            session = records[session_id]
+            if session.parent_id is None:
+                current = df.copy()
+            else:
+                current = build_session_data(session.parent_id, session.source_operation_id)
+
+            found_stop = stop_operation_id is None
+            for operation in session.operations:
+                if operation.operation_type == "created_session":
+                    if operation.id == stop_operation_id:
+                        found_stop = True
+                        break
+                    continue
+                current = apply_operation(current, operation.operation_type, operation.params)
+                if operation.id == stop_operation_id:
+                    found_stop = True
+                    break
+
+            if not found_stop:
+                raise ValueError("Saved progress file references a missing operation")
+
+            materialized[cache_key] = current.copy()
+            return current
+
+        for record in sorted(records.values(), key=lambda item: item.created_time):
+            record.data = build_session_data(record.id)
+
+        plots: dict[str, PlotRecord] = {}
+        for raw in manifest.get("saved_plots") or []:
+            session_id = str(raw["session_id"])
+            if session_id not in records:
+                continue
+            controls = dict(raw.get("controls") or {})
+            figure = build_figure(
+                records[session_id].data,
+                str(raw["column"]),
+                str(raw["plot_type"]),
+                str(raw.get("local_query") or ""),
+                controls,
+            )
+            plot = PlotRecord(
+                id=str(raw["id"]),
+                session_id=session_id,
+                session_name=str(raw.get("session_name") or records[session_id].name),
+                column=str(raw["column"]),
+                plot_type=str(raw["plot_type"]),
+                local_query=str(raw.get("local_query") or ""),
+                controls=controls,
+                figure=figure,
+                include_in_export=bool(raw.get("include_in_export", True)),
+                remark=str(raw.get("remark") or ""),
+                created_time=int(raw["created_time"]),
+                title=str(raw.get("title") or f"{raw['plot_type']} - {raw['column']}"),
+            )
+            plots[plot.id] = plot
+
+        active_session_id = manifest.get("active_session_id")
+        if active_session_id not in records:
+            active_session_id = sorted(records.values(), key=lambda item: item.created_time)[0].id
+
+        max_time = max(
+            [int(manifest.get("time_counter") or 0)]
+            + [session.created_time for session in records.values()]
+            + [op.time for session in records.values() for op in session.operations]
+            + [plot.created_time for plot in plots.values()]
+        )
+
+        self.reset()
+        self.csv_path = tmp_path
+        self.csv_name = csv_name
+        self.sample_info = restored_sample_info
+        self.sessions = records
+        self.saved_plots = plots
+        self.active_session_id = str(active_session_id)
+        self.time_counter = max_time
         return self.workspace_summary()
 
     def session_summary(self, session: SessionRecord) -> dict[str, Any]:

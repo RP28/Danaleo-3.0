@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from io import BytesIO
+from zipfile import ZipFile
+
 import pytest
 
 from danaleo.core.session_store import WorkspaceStore
@@ -240,3 +243,52 @@ def test_reload_csv_resets_previous_sessions_and_plots(csv_bytes: bytes):
     assert second["active_session"]["overview"]["rows"] == 2
     assert len(second["sessions"]) == 1
     assert second["saved_plots"] == []
+
+
+def test_delete_plot_removes_only_the_requested_saved_plot(loaded_store: WorkspaceStore):
+    base_id = loaded_store.active_session_id
+
+    loaded_store.save_plot(base_id, "age", "histogram", controls={"bins": 4}, title="Age")
+    loaded_store.save_plot(base_id, "income", "histogram", controls={"bins": 4}, title="Income")
+    first_plot_id = next(iter(loaded_store.saved_plots))
+
+    workspace = loaded_store.delete_plot(first_plot_id)
+
+    assert first_plot_id not in loaded_store.saved_plots
+    assert len(workspace["saved_plots"]) == 1
+
+
+def test_project_export_import_replays_operations_without_duplicate_session_data(
+    loaded_store: WorkspaceStore,
+):
+    base_id = loaded_store.active_session_id
+    branch_id = loaded_store.create_session("Branch", base_id)["active_session_id"]
+    loaded_store.apply_session_operation(branch_id, "drop_missing", {"column": "income"})
+    source_operation_id = loaded_store.sessions[branch_id].operations[-1].id
+    child_id = loaded_store.create_session("Child", branch_id)["active_session_id"]
+    loaded_store.apply_session_operation(branch_id, "drop_column", {"column": "segment"})
+    loaded_store.apply_session_operation(child_id, "filter_rows", {"query": "age > 30"})
+    loaded_store.save_plot(child_id, "age", "histogram", controls={"bins": 4}, title="Child ages")
+
+    exported = loaded_store.export_project()
+    with ZipFile(BytesIO(exported)) as archive:
+        names = set(archive.namelist())
+        manifest = archive.read("manifest.json").decode("utf-8")
+
+    assert names == {"manifest.json", "source.csv"}
+    assert "\"data\"" not in manifest
+
+    restored_store = WorkspaceStore()
+    workspace = restored_store.import_project(exported)
+
+    restored_branch = restored_store.sessions[branch_id]
+    restored_child = restored_store.sessions[child_id]
+
+    assert workspace["csv_name"] == "customers.csv"
+    assert restored_child.source_operation_id == source_operation_id
+    assert len(restored_branch.data) == 7
+    assert "segment" not in restored_branch.data.columns
+    assert len(restored_child.data) == 5
+    assert "segment" in restored_child.data.columns
+    assert workspace["saved_plots"][0]["title"] == "Child ages"
+    assert workspace["saved_plots"][0]["figure"]["image"].startswith("data:image/png;base64,")

@@ -80,6 +80,8 @@ button { cursor: pointer; }
 .upload-form { display: flex; flex-direction: column; gap: 16px; }
 .dropzone { border: 1px dashed var(--border); border-radius: var(--radius-lg); min-height: 170px; display: grid; place-items: center; gap: 10px; color: var(--muted); background: var(--panelSoft); }
 .dropzone input { display: none; }
+.progress-form { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--borderSoft); }
+.compact-dropzone { min-height: 94px; }
 
 input, select, textarea {
   width: 100%; color: var(--text); border: 1px solid var(--border); background: #0c1018; border-radius: var(--radius-sm); padding: 10px 12px; outline: none;
@@ -92,6 +94,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); }
 .primary-btn { background: linear-gradient(135deg, var(--primary), #6554ff); border-color: #8a7fff; }
 .ghost-btn { background: var(--panelSoft); border-color: var(--border); }
 .ghost-btn:hover { border-color: var(--primary); }
+.danger-btn:hover { border-color: var(--danger); color: var(--danger); }
 .primary-btn.large { padding: 14px 18px; }
 .danger { color: var(--danger); }
 .full { width: 100%; margin-top: 12px; }
@@ -740,6 +743,10 @@ body {
 .dropzone {
   min-height: 130px;
   border-radius: 15px;
+}
+
+.compact-dropzone {
+  min-height: 76px;
 }
 
 input,

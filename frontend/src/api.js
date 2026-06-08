@@ -17,7 +17,9 @@ async function request(path, options = {}) {
 
 export const api = {
   workspace: () => request('/api/workspace'),
+  resetWorkspace: () => request('/api/workspace/reset', { method: 'POST' }),
   upload: (formData) => request('/api/upload', { method: 'POST', body: formData }),
+  loadProgress: (formData) => request('/api/progress/load', { method: 'POST', body: formData }),
   createSession: (name, parentId) => request('/api/sessions', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, parent_id: parentId })
@@ -48,6 +50,21 @@ export const api = {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   }),
+  deletePlot: (plotId) => request(`/api/plots/${plotId}`, { method: 'DELETE' }),
+  saveProgress: async () => {
+    const res = await request('/api/progress/download');
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const disposition = res.headers.get('content-disposition') || '';
+    const match = disposition.match(/filename="(.+)"/);
+    a.download = match?.[1] || 'danaleo_progress.danaleo';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  },
   exportNotebook: async () => {
     const res = await request('/api/export/notebook');
     const blob = await res.blob();

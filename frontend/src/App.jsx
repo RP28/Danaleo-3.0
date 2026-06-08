@@ -7,7 +7,7 @@ import PlotBuilder from './components/PlotBuilder.jsx';
 import SessionTree from './components/SessionTree.jsx';
 import SavedPlots from './components/SavedPlots.jsx';
 import Toast from './components/Toast.jsx';
-import { Download } from 'lucide-react';
+import { ArrowLeft, Download, Save } from 'lucide-react';
 
 
 function nextBranchName(_parent, sessions) {
@@ -145,6 +145,29 @@ export default function App() {
     }
   }, [applyWorkspace, workspace]);
 
+  const resetToUpload = useCallback(async () => {
+    if (!window.confirm('Go back to CSV upload and discard all current progress?')) return;
+    try {
+      const next = await api.resetWorkspace();
+      setWorkspace(next);
+      setSelectedColumn(null);
+      setColumnStats(null);
+      setActiveFigure(null);
+      setToast({ type: 'success', text: 'Workspace cleared' });
+    } catch (err) {
+      setToast({ type: 'error', text: err.message });
+    }
+  }, []);
+
+  const saveProgress = useCallback(async () => {
+    try {
+      await api.saveProgress();
+      setToast({ type: 'success', text: 'Progress file saved' });
+    } catch (err) {
+      setToast({ type: 'error', text: err.message });
+    }
+  }, []);
+
   if (!workspace?.ready) {
     return <UploadZone onUploaded={setWorkspace} onError={(text) => setToast({ type: 'error', text })} toast={toast} setToast={setToast} />;
   }
@@ -169,6 +192,8 @@ export default function App() {
             <h1>{workspace.csv_name}</h1>
           </div>
           <div className="topbar-actions">
+            <button className="ghost-btn" onClick={resetToUpload}><ArrowLeft size={16}/> CSV upload</button>
+            <button className="ghost-btn" onClick={saveProgress}><Save size={16}/> Save progress</button>
             <button className="primary-btn" onClick={() => api.exportNotebook().catch((err) => setToast({ type: 'error', text: err.message }))}><Download size={16}/> Export ipynb</button>
           </div>
         </header>

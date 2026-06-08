@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Upload, Database } from 'lucide-react';
+import { Upload, Database, FileUp } from 'lucide-react';
 import { api } from '../api.js';
 import Toast from './Toast.jsx';
 
@@ -9,6 +9,8 @@ export default function UploadZone({ onUploaded, onError, toast, setToast }) {
   const [sampleN, setSampleN] = useState(10000);
   const [sampleFrac, setSampleFrac] = useState(0.2);
   const [loading, setLoading] = useState(false);
+  const [progressFile, setProgressFile] = useState(null);
+  const [loadingProgress, setLoadingProgress] = useState(false);
 
   async function submit(event) {
     event.preventDefault();
@@ -26,6 +28,22 @@ export default function UploadZone({ onUploaded, onError, toast, setToast }) {
       onError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadProgress(event) {
+    event.preventDefault();
+    if (!progressFile) return onError('Choose a .danaleo file first');
+    const form = new FormData();
+    form.append('file', progressFile);
+    setLoadingProgress(true);
+    try {
+      const data = await api.loadProgress(form);
+      onUploaded(data);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setLoadingProgress(false);
     }
   }
 
@@ -55,6 +73,14 @@ export default function UploadZone({ onUploaded, onError, toast, setToast }) {
           </details>
 
           <button className="primary-btn large" disabled={loading}>{loading ? 'Loading…' : 'Open workspace'}</button>
+        </form>
+        <form onSubmit={loadProgress} className="upload-form progress-form">
+          <label className="dropzone compact-dropzone">
+            <FileUp size={24}/>
+            <span>{progressFile ? progressFile.name : 'Open saved .danaleo progress'}</span>
+            <input type="file" accept=".danaleo,application/zip" onChange={(e) => setProgressFile(e.target.files?.[0])}/>
+          </label>
+          <button className="ghost-btn large" disabled={loadingProgress}>{loadingProgress ? 'Restoring…' : 'Restore progress'}</button>
         </form>
       </div>
       <Toast toast={toast} onClose={() => setToast(null)} />

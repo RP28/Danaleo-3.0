@@ -67,6 +67,12 @@ def workspace() -> dict:
     return store.workspace_summary()
 
 
+@app.post("/api/workspace/reset")
+def reset_workspace() -> dict:
+    store.reset()
+    return store.workspace_summary()
+
+
 @app.post("/api/upload")
 async def upload_csv(
     file: UploadFile = File(...),
@@ -80,6 +86,31 @@ async def upload_csv(
     try:
         content = await file.read()
         return store.load_csv(content, file.filename, sample_mode, sample_n, sample_frac, random_state)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/progress/download")
+def download_progress() -> Response:
+    try:
+        data = store.export_project()
+        base_name = (store.csv_name or "danaleo_progress.csv").rsplit(".", 1)[0]
+        return Response(
+            data,
+            media_type="application/vnd.danaleo.project+zip",
+            headers={"Content-Disposition": f'attachment; filename="{base_name}.danaleo"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/progress/load")
+async def load_progress(file: UploadFile = File(...)) -> dict:
+    if not file.filename or not file.filename.lower().endswith(".danaleo"):
+        raise HTTPException(status_code=400, detail="Please upload a .danaleo progress file")
+    try:
+        content = await file.read()
+        return store.import_project(content)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -170,6 +201,14 @@ def save_plot(payload: SavePlotRequest) -> dict:
 def update_plot(plot_id: str, payload: UpdatePlotRequest) -> dict:
     try:
         return store.update_plot(plot_id, payload.include_in_export, payload.remark)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/plots/{plot_id}")
+def delete_plot(plot_id: str) -> dict:
+    try:
+        return store.delete_plot(plot_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
