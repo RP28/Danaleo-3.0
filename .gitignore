@@ -2,16 +2,28 @@
 node_modules/
 frontend/node_modules/
 
-# Build/cache
+# Frontend build/cache
 frontend/.vite/
 frontend/dist/
 
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .venv/
 venv/
 .env
 
-# OS
+# Python packaging
+build/
+dist/
+*.egg-info/
+
+# OS/editor
 .DS_Store
+.idea/
+.vscode/

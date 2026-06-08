@@ -30,7 +30,7 @@ dev = [
 ]
 
 [project.scripts]
-danaleo = "danaleo.cli:main"
+danaleo = "danaleo.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
