@@ -951,3 +951,52 @@ textarea {
   border-bottom: 0;
   padding-bottom: 8px;
 }
+
+.column-check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px 14px;
+  margin-top: 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--borderSoft);
+  border-radius: 12px;
+  background: rgba(12, 16, 24, 0.42);
+}
+
+.column-check-grid .check {
+  display: grid !important;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  justify-content: start;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  color: var(--muted);
+  line-height: 1.25;
+}
+
+.check input[type='checkbox'],
+.column-check-grid input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.column-check-grid .check input[type='checkbox'] {
+  justify-self: start;
+}
+
+.column-check-grid .check {
+  overflow-wrap: anywhere;
+}
+
+.muted-note {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+}

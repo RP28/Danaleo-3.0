@@ -30,8 +30,16 @@ function defaultControls() {
     fill: true,
     group_by: '',
     group_limit: 8,
-    show_outliers: true
+    show_outliers: true,
+    subplot_enabled: false,
+    subplot_columns: [],
+    subplot_cols: 2,
+    subplot_limit: 12
   };
+}
+
+function uniqueValues(values) {
+  return values.filter((value, index, arr) => value && arr.indexOf(value) === index);
 }
 
 export default function PlotBuilder({
@@ -60,7 +68,16 @@ export default function PlotBuilder({
     return categoricalColumns.filter((c) => c !== column);
   }, [categoricalColumns, column]);
 
+  const subplotOptions = useMemo(() => {
+    return stats?.kind === 'numeric' ? numericColumns : categoricalColumns;
+  }, [categoricalColumns, numericColumns, stats?.kind]);
+
+  const selectedSubplotColumns = useMemo(() => {
+    return uniqueValues([column, ...(controls.subplot_columns || [])]).filter((c) => subplotOptions.includes(c));
+  }, [column, controls.subplot_columns, subplotOptions]);
+
   const canUseGroupedPlots = stats?.kind === 'numeric' && groupOptions.length > 0;
+  const canUseSubplots = subplotOptions.length > 1;
   const isGroupedPlot = groupedPlotTypes.has(plotType);
   const isKdePlot = kdePlotTypes.has(plotType);
 
@@ -78,7 +95,8 @@ export default function PlotBuilder({
     setRemark('');
     setControls((prev) => ({
       ...defaultControls(),
-      group_by: prev.group_by && groupOptions.includes(prev.group_by) ? prev.group_by : ''
+      group_by: prev.group_by && groupOptions.includes(prev.group_by) ? prev.group_by : '',
+      subplot_columns: []
     }));
   }, [column, groupOptions]);
 
@@ -95,6 +113,18 @@ export default function PlotBuilder({
     setControls((prev) => ({ ...prev, [key]: value }));
   }
 
+  function toggleSubplotColumn(nextColumn) {
+    if (nextColumn === column) return;
+    setControls((prev) => {
+      const current = prev.subplot_columns || [];
+      const exists = current.includes(nextColumn);
+      return {
+        ...prev,
+        subplot_columns: exists ? current.filter((c) => c !== nextColumn) : [...current, nextColumn]
+      };
+    });
+  }
+
   function buildPayload() {
     const nextControls = { ...controls };
 
@@ -104,6 +134,17 @@ export default function PlotBuilder({
 
     if (isGroupedPlot && !nextControls.group_by) {
       throw new Error('Choose a categorical column in Group by');
+    }
+
+    if (nextControls.subplot_enabled) {
+      const selected = uniqueValues([column, ...(nextControls.subplot_columns || [])]).filter((c) => subplotOptions.includes(c));
+      if (selected.length < 2) {
+        throw new Error('Choose at least two columns for subplot mode');
+      }
+      nextControls.subplot_columns = selected;
+    } else {
+      nextControls.subplot_columns = [];
+      nextControls.subplot_cols = 2;
     }
 
     return {
@@ -271,11 +312,61 @@ export default function PlotBuilder({
         )}
       </div>
 
-      {isGroupedPlot && (
-        <p className="interaction-hint">
-          Two-column plot: numeric value <strong>{column}</strong> grouped by categorical labels from <strong>{controls.group_by || '...'}</strong>.
-        </p>
-      )}
+      <details className="soft-details">
+        <summary>Subplot mode</summary>
+        <div className="builder-controls">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={!!controls.subplot_enabled}
+              disabled={!canUseSubplots}
+              onChange={(e) => updateControl('subplot_enabled', e.target.checked)}
+            /> compare multiple columns as subplots
+          </label>
+
+          {controls.subplot_enabled && (
+            <label>Columns per row
+              <input
+                type="number"
+                min="1"
+                max="6"
+                value={controls.subplot_cols}
+                onChange={(e) => updateControl('subplot_cols', Number(e.target.value))}
+              />
+            </label>
+          )}
+
+          {controls.subplot_enabled && (
+            <label>Max subplots
+              <input
+                type="number"
+                min="2"
+                max="50"
+                value={controls.subplot_limit}
+                onChange={(e) => updateControl('subplot_limit', Number(e.target.value))}
+              />
+            </label>
+          )}
+
+          {controls.subplot_enabled && (
+            <div className="wide-control">
+              <p className="muted-note">Selected columns: {selectedSubplotColumns.length}</p>
+              <div className="column-check-grid">
+                {subplotOptions.map((c) => (
+                  <label className="check" key={c}>
+                    <input
+                      type="checkbox"
+                      checked={c === column || (controls.subplot_columns || []).includes(c)}
+                      disabled={c === column}
+                      onChange={() => toggleSubplotColumn(c)}
+                    /> {c}{c === column ? ' (current)' : ''}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </details>
 
       <details className="soft-details">
         <summary>Export settings for this plot</summary>

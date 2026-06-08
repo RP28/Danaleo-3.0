@@ -62,9 +62,28 @@ def _session_creation_code(session, var_by_session: dict[str, str], store: Works
 def _plot_columns_text(plot) -> str:
     controls = plot.controls or {}
     group_col = controls.get("group_by") or controls.get("split_by") or controls.get("hue") or controls.get("color_by")
+    subplot_enabled = bool(controls.get("subplot_enabled") or controls.get("subplots"))
+    subplot_columns = controls.get("subplot_columns") or []
+    if isinstance(subplot_columns, str):
+        subplot_columns = [subplot_columns]
+    if not isinstance(subplot_columns, list):
+        subplot_columns = []
+
+    columns = []
+    for value in [plot.column, *subplot_columns]:
+        if isinstance(value, str) and value and value not in columns:
+            columns.append(value)
+
+    parts = []
+    if subplot_enabled and len(columns) > 1:
+        parts.append("Subplot columns: " + ", ".join(f"`{column}`" for column in columns))
+    else:
+        parts.append(f"Column: `{plot.column}`")
+
     if group_col:
-        return f"Column: `{plot.column}` · Group by: `{group_col}`"
-    return f"Column: `{plot.column}`"
+        parts.append(f"Group by: `{group_col}`")
+
+    return " · ".join(parts)
 
 
 def export_notebook(store: WorkspaceStore) -> bytes:
@@ -80,7 +99,8 @@ def export_notebook(store: WorkspaceStore) -> bytes:
             "import pandas as pd\n"
             "import numpy as np\n"
             "import plotly.express as px\n"
-            "import plotly.graph_objects as go"
+            "import plotly.graph_objects as go\n"
+            "from plotly.subplots import make_subplots"
         )
     )
 
@@ -98,10 +118,6 @@ def export_notebook(store: WorkspaceStore) -> bytes:
     sessions = sorted(store.sessions.values(), key=lambda s: s.created_time)
     var_by_session = _unique_var_names(sessions)
 
-    # Replay the session tree as a time-ordered event log.
-    # This matters when a child session is created from a parent after operation A,
-    # but the parent later receives operation B. The child must copy the parent's
-    # state at the branch time, not the parent's final state.
     events: list[tuple[int, int, str, Any, Any]] = []
     for session in sessions:
         events.append((session.created_time, 0, "session", session, None))
