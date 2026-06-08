@@ -4,6 +4,7 @@ pyproject.toml
 src/danaleo/__init__.py
 src/danaleo/cli.py
 src/danaleo.egg-info/._PKG-INFO
+src/danaleo.egg-info/._SOURCES.txt
 src/danaleo.egg-info/._dependency_links.txt
 src/danaleo.egg-info/._entry_points.txt
 src/danaleo.egg-info/._requires.txt
@@ -23,8 +24,12 @@ src/danaleo/core/stats.py
 src/danaleo/server/__init__.py
 src/danaleo/server/app.py
 src/danaleo/server/models.py
+src/danaleo/server/static/._assets
+src/danaleo/server/static/._index.html
 src/danaleo/server/static/index.html
-src/danaleo/server/static/assets/index-BqqQgDLw.js
+src/danaleo/server/static/assets/._index-CuIimjUK.js
+src/danaleo/server/static/assets/._index-Dk8kYlo-.css
+src/danaleo/server/static/assets/index-CuIimjUK.js
 src/danaleo/server/static/assets/index-Dk8kYlo-.css
 tests/test_api.py
 tests/test_exporter.py
