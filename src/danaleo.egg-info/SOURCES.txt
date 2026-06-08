@@ -3,6 +3,7 @@ README.md
 pyproject.toml
 src/danaleo/__init__.py
 src/danaleo/cli.py
+src/danaleo/main.py
 src/danaleo.egg-info/._PKG-INFO
 src/danaleo.egg-info/._SOURCES.txt
 src/danaleo.egg-info/._dependency_links.txt
@@ -24,13 +25,9 @@ src/danaleo/core/stats.py
 src/danaleo/server/__init__.py
 src/danaleo/server/app.py
 src/danaleo/server/models.py
-src/danaleo/server/static/._assets
-src/danaleo/server/static/._index.html
 src/danaleo/server/static/index.html
-src/danaleo/server/static/assets/._index-CuIimjUK.js
-src/danaleo/server/static/assets/._index-Dk8kYlo-.css
-src/danaleo/server/static/assets/index-CuIimjUK.js
-src/danaleo/server/static/assets/index-Dk8kYlo-.css
+src/danaleo/server/static/assets/index-B9Te0lI7.css
+src/danaleo/server/static/assets/index-Cm2wDaRI.js
 tests/test_api.py
 tests/test_exporter.py
 tests/test_frontend_regressions.py
