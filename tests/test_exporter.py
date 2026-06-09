@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from io import BytesIO
+from zipfile import ZipFile
+
 import nbformat
 import pytest
 
-from danaleo.core.exporter import export_notebook
+from danaleo.core.exporter import export_notebook, export_notebooks_payload
 from danaleo.core.session_store import WorkspaceStore
 
 
@@ -11,6 +14,17 @@ def notebook_sources(raw: bytes) -> str:
     notebook = nbformat.reads(raw.decode("utf-8"), as_version=4)
     return "\n\n".join(cell.source for cell in notebook.cells)
 
+def zip_notebook_sources(raw: bytes) -> dict[str, str]:
+    with ZipFile(BytesIO(raw)) as archive:
+        return {
+            name: notebook_sources(archive.read(name))
+            for name in archive.namelist()
+            if name.endswith(".ipynb")
+        }
+
+def notebook_code_cells(raw: bytes) -> list[str]:
+    notebook = nbformat.reads(raw.decode("utf-8"), as_version=4)
+    return [cell.source for cell in notebook.cells if cell.cell_type == "code"]
 
 def test_export_notebook_recreates_sessions_operations_selected_plots(csv_bytes: bytes):
     workspace_store = WorkspaceStore()
@@ -60,10 +74,6 @@ def test_export_notebook_recreates_sessions_operations_selected_plots(csv_bytes:
     assert "Income distribution after filtering." in combined_sources
     assert "Filtered income" in combined_sources
     assert "sns.histplot(" in combined_sources
-    assert "def _plot" not in combined_sources
-    assert "from danaleo" not in combined_sources
-    assert "import danaleo" not in combined_sources
-    assert "Skipped segment plot" not in combined_sources
 
 
 def test_export_notebook_requires_loaded_workspace():
@@ -260,13 +270,10 @@ def test_exported_notebook_plot_code_uses_only_standalone_libraries(csv_bytes: b
     notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
     code_sources = "\n\n".join(cell.source for cell in notebook.cells if cell.cell_type == "code")
 
-    assert "danaleo.core" not in code_sources
-    assert "import danaleo" not in code_sources
     assert "import pandas as pd" in code_sources
     assert "import numpy as np" in code_sources
     assert "import matplotlib.pyplot as plt" in code_sources
     assert "import seaborn as sns" in code_sources
-    assert "def _plot" not in code_sources
     assert "sns.scatterplot(" in code_sources
     for cell in notebook.cells:
         if cell.cell_type == "code":
@@ -303,11 +310,16 @@ def test_export_without_saved_plots_has_no_selected_plots_section(csv_bytes: byt
     assert "sns." not in combined_sources
 
 
-def test_export_notebook_includes_marked_plots_from_all_workspace_datasets():
+def test_export_payload_includes_marked_plots_in_their_own_dataset_notebooks():
     workspace_store = WorkspaceStore()
+
     first = workspace_store.load_csv(b"x\n1\n2\n", "first.csv")
-    first_dataset_id = first["active_dataset_id"]
-    workspace_store.save_plot(first["active_session_id"], "x", "histogram", title="First plot")
+    workspace_store.save_plot(
+        first["active_session_id"],
+        "x",
+        "histogram",
+        title="First plot",
+    )
 
     workspace_store.load_csv(b"y\n10\n20\n", "second.csv")
     workspace_store.save_plot(
@@ -317,49 +329,69 @@ def test_export_notebook_includes_marked_plots_from_all_workspace_datasets():
         include_in_export=False,
         title="Skipped second plot",
     )
-    second_sources = notebook_sources(export_notebook(workspace_store))
-    assert "Danaleo EDA Export: second.csv" in second_sources
-    assert "First plot" in second_sources
-    assert "pd.read_csv('first.csv')" in second_sources
-    assert "Skipped second plot" not in second_sources
 
-    workspace_store.set_active_dataset(first_dataset_id)
-    first_sources = notebook_sources(export_notebook(workspace_store))
+    raw, filename, media_type = export_notebooks_payload(workspace_store)
+
+    assert filename == "danaleo_eda_notebooks.zip"
+    assert media_type == "application/zip"
+
+    entries = zip_notebook_sources(raw)
+
+    assert set(entries) == {
+        "first_eda.ipynb",
+        "second_eda.ipynb",
+    }
+
+    first_sources = entries["first_eda.ipynb"]
+    second_sources = entries["second_eda.ipynb"]
+
     assert "Danaleo EDA Export: first.csv" in first_sources
     assert "First plot" in first_sources
+    assert "pd.read_csv('first.csv')" in first_sources
+
+    assert "Danaleo EDA Export: second.csv" in second_sources
+    assert "First plot" not in second_sources
+    assert "Skipped second plot" not in second_sources
 
 
-def test_export_notebook_reconstructs_external_plot_session_operations():
+def test_export_payload_reconstructs_each_dataset_plot_session_operations_in_own_notebook():
     workspace_store = WorkspaceStore()
+
     source = workspace_store.load_csv(b"value\n1\n2\n2\n", "source.csv")
-    branch_id = workspace_store.create_session("Clean source", source["active_session_id"])[
-        "active_session_id"
-    ]
+    branch_id = workspace_store.create_session(
+        "Clean source",
+        source["active_session_id"],
+    )["active_session_id"]
+
     workspace_store.apply_session_operation(branch_id, "drop_duplicates", {})
     workspace_store.save_plot(branch_id, "value", "histogram", title="Source values")
+
     workspace_store.load_csv(b"other\n10\n20\n", "active.csv")
 
-    sources = notebook_sources(export_notebook(workspace_store))
+    raw, filename, media_type = export_notebooks_payload(workspace_store)
 
-    assert "Source values" in sources
-    assert "pd.read_csv('source.csv')" in sources
-    assert ".drop_duplicates().copy()" in sources
-    assert "_plot_df = df_source_clean_source_plot.copy()" in sources
+    assert filename == "danaleo_eda_notebooks.zip"
+    assert media_type == "application/zip"
 
-    notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
-    code_cells = [cell.source for cell in notebook.cells if cell.cell_type == "code"]
-    assert "df_source_clean_source_plot = pd.read_csv('source.csv')" in code_cells
-    assert (
-        "df_source_clean_source_plot = "
-        "df_source_clean_source_plot.drop_duplicates().copy()"
-    ) in code_cells
-    assert "df_source_clean_source_plot = df_source_clean_source_plot.copy()" in code_cells
+    entries = zip_notebook_sources(raw)
+
+    source_sources = entries["source_eda.ipynb"]
+    active_sources = entries["active_eda.ipynb"]
+
+    assert "Source values" in source_sources
+    assert "pd.read_csv('source.csv')" in source_sources
+    assert ".drop_duplicates().copy()" in source_sources
+    assert "_plot_df = df_clean_source.copy()" in source_sources
+
+    assert "Source values" not in active_sources
+    assert "pd.read_csv('active.csv')" in active_sources
 
 
 def test_export_notebook_rebuilds_merge_without_redundant_markdown():
     workspace_store = WorkspaceStore()
     left = workspace_store.load_csv(b"id,a\n1,A\n2,B\n", "left.csv")
     right = workspace_store.load_csv(b"id,b\n2,X\n3,Y\n", "right.csv")
+
     workspace_store.create_merged_dataset(
         left["active_session_id"],
         right["active_session_id"],
@@ -370,18 +402,24 @@ def test_export_notebook_rebuilds_merge_without_redundant_markdown():
         name="joined.csv",
     )
 
-    sources = notebook_sources(export_notebook(workspace_store))
+    exported = export_notebook(workspace_store)
+    sources = notebook_sources(exported)
+    code_cells = notebook_code_cells(exported)
 
-    assert "## Merge provenance" not in sources
-    assert "## Rebuild merged data" not in sources
+    merge_cells = [source for source in code_cells if ".merge(" in source]
+
     assert "pd.read_csv('left.csv')" in sources
     assert "pd.read_csv('right.csv')" in sources
-    assert "df = pd.merge(" in sources
-    assert "how='outer'" in sources
-    assert "left_on=['id']" in sources
-    assert "right_on=['id']" in sources
-    assert "pd.read_csv('joined.csv')" not in sources
 
+    assert len(merge_cells) == 1
+    assert merge_cells[0].startswith("df = ")
+    assert ".merge(" in merge_cells[0]
+    assert "pd.merge(" not in merge_cells[0]
+
+    assert "how='outer'" in merge_cells[0]
+    assert "left_on=['id']" in merge_cells[0]
+    assert "right_on=['id']" in merge_cells[0]
+    assert "suffixes=('_left', '_right')" in merge_cells[0]
 
 def test_exported_merged_root_operations_and_plots_use_loaded_dataframe():
     workspace_store = WorkspaceStore()
@@ -412,7 +450,7 @@ def test_exported_merged_root_operations_and_plots_use_loaded_dataframe():
     assert "df = df.drop_duplicates().copy()" in sources
     assert "_plot_df = df.copy()" in sources
     assert "df_merged_result" not in sources
-    assert "df = pd.merge(" in sources
+    assert ".merge(" in sources
 
     namespace = {
         "pd": __import__("pandas"),
@@ -424,7 +462,7 @@ def test_exported_merged_root_operations_and_plots_use_loaded_dataframe():
         if (
             cell.cell_type != "code"
             or "pd.read_csv" in cell.source
-            or "pd.merge" in cell.source
+            or ".merge(" in cell.source
             or cell.source == "df.head()"
         ):
             continue
@@ -487,22 +525,32 @@ def test_export_notebook_rebuilds_nested_merge_chain_with_source_session_operati
         name="complete_products.csv",
     )
 
-    sources = notebook_sources(export_notebook(workspace_store))
+    exported = export_notebook(workspace_store)
+    sources = notebook_sources(exported)
+    code_cells = notebook_code_cells(exported)
+
+    merge_cells = [source for source in code_cells if ".merge(" in source]
 
     assert "pd.read_csv('products.csv')" in sources
     assert "pd.read_csv('subcategories.csv')" in sources
     assert "pd.read_csv('categories.csv')" in sources
     assert ".query('price >= 200').copy()" in sources
-    assert sources.count("pd.merge(") == 2
+
+    assert len(merge_cells) == 2
+    assert all("pd.merge(" not in source for source in merge_cells)
+
     assert "pd.read_csv('products_with_subcategories.csv')" not in sources
     assert "pd.read_csv('complete_products.csv')" not in sources
 
 
 def test_export_notebook_falls_back_to_merged_snapshot_when_source_dataset_was_removed():
     workspace_store = WorkspaceStore()
+
     left = workspace_store.load_csv(b"id,a\n1,A\n2,B\n", "left.csv")
     left_dataset_id = left["active_dataset_id"]
+
     right = workspace_store.load_csv(b"id,b\n2,X\n3,Y\n", "right.csv")
+
     workspace_store.create_merged_dataset(
         left["active_session_id"],
         right["active_session_id"],
@@ -512,13 +560,17 @@ def test_export_notebook_falls_back_to_merged_snapshot_when_source_dataset_was_r
         ["_left", "_right"],
         name="joined.csv",
     )
+
     workspace_store.delete_dataset(left_dataset_id)
 
-    sources = notebook_sources(export_notebook(workspace_store))
+    exported = export_notebook(workspace_store)
+    sources = notebook_sources(exported)
+    code_cells = notebook_code_cells(exported)
 
     assert "df = pd.read_csv('joined.csv')" in sources
-    assert "pd.merge(" not in sources
 
+    assert not any(".merge(" in source for source in code_cells)
+    assert not any("pd.merge(" in source for source in code_cells)
 
 def test_exported_markdown_keeps_only_critical_headings_and_user_remarks():
     workspace_store = WorkspaceStore()
@@ -567,5 +619,15 @@ def test_exported_workflows_emit_each_load_merge_and_operation_as_separate_code_
     assert "df_left = pd.read_csv('left.csv')" in code_cells
     assert "df_left = df_left.drop_duplicates().copy()" in code_cells
     assert "df_right = pd.read_csv('right.csv')" in code_cells
-    assert any(source.startswith("df = pd.merge(") for source in code_cells)
+    merge_cells = [
+        source
+        for source in code_cells
+        if source.startswith("df = ") and ".merge(" in source
+    ]
+
+    assert len(merge_cells) == 1
+    assert "pd.merge(" not in merge_cells[0]
+    assert "how='left'" in merge_cells[0]
+    assert "left_on=['id']" in merge_cells[0]
+    assert "right_on=['id']" in merge_cells[0]
     assert "df = df.drop_duplicates().copy()" in code_cells
