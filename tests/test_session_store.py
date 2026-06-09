@@ -52,6 +52,65 @@ def test_load_csv_creates_base_workspace(csv_bytes: bytes):
     }
 
 
+@pytest.mark.parametrize(
+    ("source", "expected_delimiter"),
+    [
+        (b"name;amount;city\nAlice;12,50;Paris\nBob;9,25;Lyon\n", ";"),
+        (b"name\tamount\tcity\nAlice\t12.5\tParis\n", "\t"),
+        (b"name|amount|city\nAlice|12.5|Paris\n", "|"),
+    ],
+)
+def test_load_csv_detects_common_delimiters(source: bytes, expected_delimiter: str):
+    workspace = WorkspaceStore().load_csv(source, "export.csv")
+
+    assert workspace["active_session"]["overview"]["columns"] == 3
+    assert workspace["parse_info"]["delimiter"] == expected_delimiter
+
+
+def test_load_csv_handles_excel_separator_directive_bom_and_common_encodings():
+    excel = "sep=;\nname;city\nAlice;Zürich\n".encode("utf-8-sig")
+    excel_workspace = WorkspaceStore().load_csv(excel, "excel.csv")
+    assert excel_workspace["active_session"]["overview"]["rows"] == 1
+    assert excel_workspace["active_session"]["overview"]["columns"] == 2
+    assert excel_workspace["parse_info"] == {
+        "delimiter": ";",
+        "encoding": "utf-8-sig",
+        "skiprows": 1,
+    }
+
+    utf16_workspace = WorkspaceStore().load_csv("name;city\nAlice;Zürich\n".encode("utf-16"), "utf16.csv")
+    assert utf16_workspace["active_session"]["overview"]["columns"] == 2
+    assert utf16_workspace["parse_info"]["encoding"] == "utf-16"
+
+    windows_workspace = WorkspaceStore().load_csv("name,city\nAndré,Montréal\n".encode("cp1252"), "windows.csv")
+    assert windows_workspace["active_session"]["overview"]["columns"] == 2
+    assert windows_workspace["parse_info"]["encoding"] == "cp1252"
+
+
+def test_load_csv_preserves_valid_quoted_single_column_files():
+    workspace = WorkspaceStore().load_csv(b'"description, text"\n"hello, world"\n', "single.csv")
+
+    assert workspace["active_session"]["overview"]["columns"] == 1
+    assert workspace["active_session"]["overview"]["rows"] == 1
+
+
+def test_load_csv_rejects_malformed_non_comma_files_instead_of_loading_one_column():
+    with pytest.raises(ValueError, match="Could not parse CSV"):
+        WorkspaceStore().load_csv(b'name;notes\nAlice;"unterminated\n', "broken.csv")
+
+
+def test_project_round_trip_preserves_detected_csv_options():
+    workspace_store = WorkspaceStore()
+    original = workspace_store.load_csv("sep=;\nname;city\nAlice;Paris\n".encode("utf-16"), "excel.csv")
+
+    restored_store = WorkspaceStore()
+    restored = restored_store.import_project(workspace_store.export_project())
+
+    assert restored["parse_info"] == original["parse_info"]
+    assert restored["active_session"]["overview"]["columns"] == 2
+    assert restored["active_session"]["overview"]["rows"] == 1
+
+
 def test_sampling_options_record_how_data_was_reduced(csv_bytes: bytes):
     by_count = WorkspaceStore().load_csv(
         csv_bytes,

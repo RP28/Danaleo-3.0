@@ -14,6 +14,7 @@ import pandas as pd
 from danaleo.core.operations import apply_operation, operation_label
 from danaleo.core.plots import build_figure
 from danaleo.core.stats import column_cards, dataframe_overview, dataset_profile
+from danaleo.core.csv_ingestion import read_csv_detected
 
 
 @dataclass
@@ -59,6 +60,7 @@ class DatasetRecord:
     csv_path: str
     csv_name: str
     sample_info: dict[str, Any] | None
+    parse_info: dict[str, Any] | None
     active_session_id: str
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
     saved_plots: dict[str, PlotRecord] = field(default_factory=dict)
@@ -93,6 +95,10 @@ class WorkspaceStore:
     @property
     def sample_info(self) -> dict[str, Any] | None:
         return self.active_dataset.sample_info if self.active_dataset else None
+
+    @property
+    def parse_info(self) -> dict[str, Any] | None:
+        return self.active_dataset.parse_info if self.active_dataset else None
 
     @property
     def active_session_id(self) -> str | None:
@@ -133,8 +139,9 @@ class WorkspaceStore:
         sample_n: int | None = None,
         sample_frac: float | None = None,
         random_state: int = 42,
-    ) -> tuple[pd.DataFrame, dict[str, Any] | None]:
-        df = pd.read_csv(csv_path)
+        parse_info: dict[str, Any] | None = None,
+    ) -> tuple[pd.DataFrame, dict[str, Any] | None, dict[str, Any]]:
+        df, detected_parse_info = read_csv_detected(csv_path, parse_info)
         sample_info: dict[str, Any] | None = None
         original_rows = len(df)
         if sample_mode == "n" and sample_n and sample_n > 0 and sample_n < len(df):
@@ -153,7 +160,7 @@ class WorkspaceStore:
                 "random_state": random_state,
                 "original_rows": int(original_rows),
             }
-        return df, sample_info
+        return df, sample_info, detected_parse_info
 
     def load_csv(
         self,
@@ -169,14 +176,18 @@ class WorkspaceStore:
             tmp.write(file_bytes)
             tmp_path = tmp.name
 
-        df, sample_info = self._read_csv_with_sampling(
-            tmp_path,
-            sample_mode,
-            sample_n,
-            sample_frac,
-            random_state,
-        )
-        return self._register_dataset(df, tmp_path, filename, sample_info)
+        try:
+            df, sample_info, parse_info = self._read_csv_with_sampling(
+                tmp_path,
+                sample_mode,
+                sample_n,
+                sample_frac,
+                random_state,
+            )
+        except Exception:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+        return self._register_dataset(df, tmp_path, filename, sample_info, parse_info)
 
     def _register_dataset(
         self,
@@ -184,6 +195,7 @@ class WorkspaceStore:
         csv_path: str,
         filename: str,
         sample_info: dict[str, Any] | None = None,
+        parse_info: dict[str, Any] | None = None,
         session_name: str = "Base Session",
         creation_label: str = "Created Base Session",
         provenance: dict[str, Any] | None = None,
@@ -214,6 +226,7 @@ class WorkspaceStore:
             csv_path=csv_path,
             csv_name=filename,
             sample_info=sample_info,
+            parse_info=parse_info,
             active_session_id=base_id,
             sessions={base_id: base_session},
             provenance=provenance,
@@ -645,6 +658,7 @@ class WorkspaceStore:
             "id": dataset.id,
             "csv_name": dataset.csv_name,
             "sample_info": dataset.sample_info,
+            "parse_info": dataset.parse_info,
             "provenance": dataset.provenance,
             "active_session_id": dataset.active_session_id,
             "source_path": f"datasets/{dataset.id}/source.csv",
@@ -713,17 +727,21 @@ class WorkspaceStore:
 
         sample_info = raw.get("sample_info")
         if sample_info:
-            df, restored_sample_info = self._read_csv_with_sampling(
+            df, restored_sample_info, restored_parse_info = self._read_csv_with_sampling(
                 tmp_path,
                 sample_info.get("mode", "none"),
                 sample_info.get("sample_n"),
                 sample_info.get("sample_frac"),
                 sample_info.get("random_state", 42),
+                raw.get("parse_info"),
             )
             if restored_sample_info:
                 restored_sample_info["original_rows"] = sample_info.get("original_rows", restored_sample_info["original_rows"])
         else:
-            df, restored_sample_info = self._read_csv_with_sampling(tmp_path)
+            df, restored_sample_info, restored_parse_info = self._read_csv_with_sampling(
+                tmp_path,
+                parse_info=raw.get("parse_info"),
+            )
 
         raw_sessions = raw.get("sessions") or []
         if not raw_sessions:
@@ -811,6 +829,7 @@ class WorkspaceStore:
             csv_path=tmp_path,
             csv_name=csv_name,
             sample_info=restored_sample_info,
+            parse_info=restored_parse_info,
             active_session_id=str(active_session_id),
             sessions=records,
             saved_plots=plots,
@@ -892,6 +911,7 @@ class WorkspaceStore:
             "id": dataset.id,
             "csv_name": dataset.csv_name,
             "sample_info": dataset.sample_info,
+            "parse_info": dataset.parse_info,
             "provenance": dataset.provenance,
             "active_session_id": dataset.active_session_id,
             "rows": len(active.data),
@@ -909,6 +929,7 @@ class WorkspaceStore:
             "csv_name": self.csv_name,
             "csv_path": self.csv_path,
             "sample_info": self.sample_info,
+            "parse_info": self.parse_info,
             "active_session_id": self.active_session_id,
             "active_session": self.session_summary(active, include_profile=True) if active else None,
             "sessions": [self.session_summary(s) for s in sorted(self.sessions.values(), key=lambda x: x.created_time)],

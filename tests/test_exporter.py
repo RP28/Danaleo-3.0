@@ -76,6 +76,18 @@ def test_export_notebook_recreates_sessions_operations_selected_plots(csv_bytes:
     assert "sns.histplot(" in combined_sources
 
 
+def test_export_notebook_reuses_detected_csv_parse_options():
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(
+        "sep=;\nname;city\nAndré;Montréal\n".encode("cp1252"),
+        "regional.csv",
+    )
+
+    combined_sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "pd.read_csv('regional.csv', sep=';', encoding='cp1252', skiprows=1)" in combined_sources
+
+
 def test_export_notebook_requires_loaded_workspace():
     workspace_store = WorkspaceStore()
 

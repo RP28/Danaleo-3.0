@@ -18,6 +18,7 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload mul
 * Rename, activate, and delete sessions
 * Filter rows using pandas-style queries
 * Drop columns
+* Automatically detect common CSV separators and text encodings
 * Drop missing values
 * Drop exact duplicate rows
 * Replace values, including multiple replacements

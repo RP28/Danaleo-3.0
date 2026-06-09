@@ -70,6 +70,30 @@ def test_upload_rejects_malformed_csv_and_accepts_uppercase_extension():
     assert uppercase.status_code == 200
 
 
+def test_upload_auto_detects_non_comma_csv_content():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/upload",
+        files={
+            "file": (
+                "regional.csv",
+                "sep=;\nname;amount;city\nAndré;12,50;Montréal\n".encode("cp1252"),
+                "text/csv",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    workspace = response.json()
+    assert workspace["active_session"]["overview"]["columns"] == 3
+    assert workspace["parse_info"] == {
+        "delimiter": ";",
+        "encoding": "cp1252",
+        "skiprows": 1,
+    }
+
+
 def test_upload_with_sampling_modes(csv_bytes: bytes):
     client = TestClient(app)
 
