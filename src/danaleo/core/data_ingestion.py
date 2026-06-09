@@ -671,6 +671,27 @@ def notebook_read_expression(
     raise ValueError(f"Unsupported data format: {format_name}")
 
 
+def notebook_cleanup_expression(
+    variable: str,
+    parse_info: dict[str, Any] | None,
+) -> str:
+    options = parse_info or {}
+    lines = [f"{variable}.columns = _danaleo_unique_columns({variable}.columns)"]
+    if options.get("index_names"):
+        lines.append(f"{variable}.index.names = {options['index_names']!r}")
+        lines.append(f"{variable} = {variable}.reset_index()")
+    lines.extend(
+        [
+            f"{variable} = {variable}.dropna(axis=0, how='all').dropna(axis=1, how='all').reset_index(drop=True)",
+            f"for _column in [column for column in {variable}.columns if {variable}[column].dtype == 'object']:",
+            f"    {variable}[_column] = {variable}[_column].map(_danaleo_safe_cell, na_action='ignore')",
+        ]
+    )
+    if options.get("column_names"):
+        lines.append(f"{variable}.columns = {options['column_names']!r}")
+    return "\n".join(lines)
+
+
 def _notebook_json_payload(filename: str, encoding: str) -> str:
     lower_name = filename.lower()
     if lower_name.endswith(".gz"):

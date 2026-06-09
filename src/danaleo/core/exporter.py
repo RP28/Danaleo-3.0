@@ -13,7 +13,7 @@ import pandas as pd
 from danaleo.core.operations import parse_scalar
 from danaleo.core.plots import notebook_plot_code
 from danaleo.core.session_store import WorkspaceStore
-from danaleo.core.data_ingestion import notebook_read_expression
+from danaleo.core.data_ingestion import notebook_cleanup_expression, notebook_read_expression
 
 
 def _python_literal(value: Any) -> str:
@@ -153,13 +153,9 @@ def _load_dataset_code(dataset, df_var: str) -> list[str]:
             dataset.csv_name,
             dataset.source_format,
             dataset.parse_info,
-        )
+        ),
+        notebook_cleanup_expression(df_var, dataset.parse_info),
     ]
-    if dataset.parse_info and dataset.parse_info.get("index_names"):
-        code[0] += f"\n{df_var}.index.names = {dataset.parse_info['index_names']!r}"
-        code[0] += f"\n{df_var} = {df_var}.reset_index()"
-    if dataset.parse_info and dataset.parse_info.get("column_names"):
-        code[0] += f"\n{df_var}.columns = {dataset.parse_info['column_names']!r}"
     info = dataset.sample_info
     if info and info.get("mode") == "n":
         code.append(
@@ -342,8 +338,60 @@ def _build_dataset_notebook(store: WorkspaceStore, dataset) -> bytes:
         nbf.v4.new_code_cell(
             "import pandas as pd\n"
             "import numpy as np\n"
+            "import json\n"
+            "from datetime import date, datetime\n"
+            "from decimal import Decimal\n"
             "import matplotlib.pyplot as plt\n"
-            "import seaborn as sns"
+            "import seaborn as sns\n\n"
+            "def _danaleo_unique_columns(columns):\n"
+            "    names = []\n"
+            "    used = set()\n"
+            "    for index, column in enumerate(columns):\n"
+            "        if isinstance(column, memoryview):\n"
+            "            column = column.tobytes()\n"
+            "        if isinstance(column, (bytes, bytearray)):\n"
+            "            for encoding in ('utf-8', 'cp1252', 'latin-1'):\n"
+            "                try:\n"
+            "                    column = bytes(column).decode(encoding)\n"
+            "                    break\n"
+            "                except UnicodeDecodeError:\n"
+            "                    continue\n"
+            "            else:\n"
+            "                column = bytes(column).hex()\n"
+            "        base = str(column).strip() or f'Unnamed: {index}'\n"
+            "        name = base\n"
+            "        suffix = 1\n"
+            "        while name in used:\n"
+            "            name = f'{base}.{suffix}'\n"
+            "            suffix += 1\n"
+            "        used.add(name)\n"
+            "        names.append(name)\n"
+            "    return names\n\n"
+            "def _danaleo_safe_cell(value):\n"
+            "    if isinstance(value, memoryview):\n"
+            "        value = value.tobytes()\n"
+            "    if isinstance(value, (bytes, bytearray)):\n"
+            "        for encoding in ('utf-8', 'cp1252', 'latin-1'):\n"
+            "            try:\n"
+            "                value = bytes(value).decode(encoding)\n"
+            "                break\n"
+            "            except UnicodeDecodeError:\n"
+            "                continue\n"
+            "        else:\n"
+            "            value = bytes(value).hex()\n"
+            "    if isinstance(value, np.generic):\n"
+            "        value = value.item()\n"
+            "    if isinstance(value, np.ndarray):\n"
+            "        value = value.tolist()\n"
+            "    if isinstance(value, (dict, list, tuple, set)):\n"
+            "        return json.dumps(value, ensure_ascii=False, default=str, "
+            "sort_keys=isinstance(value, dict))\n"
+            "    if isinstance(value, Decimal):\n"
+            "        return str(value)\n"
+            "    if isinstance(value, (str, int, float, bool, date, datetime, "
+            "pd.Timestamp, pd.Timedelta)):\n"
+            "        return value\n"
+            "    return str(value)"
         )
     )
 

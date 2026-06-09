@@ -493,11 +493,12 @@ def test_exported_merged_root_operations_and_plots_use_loaded_dataframe():
     }
     for cell in notebook.cells:
         if (
-            cell.cell_type != "code"
-            or "pd.read_csv" in cell.source
-            or ".merge(" in cell.source
-            or cell.source == "df.head()"
-        ):
+                cell.cell_type != "code"
+                or "pd.read_csv" in cell.source
+                or " = _danaleo_unique_columns(" in cell.source
+                or ".merge(" in cell.source
+                or cell.source == "df.head()"
+            ):
             continue
         exec(compile(cell.source, "<merged-export-cell>", "exec"), namespace)
 

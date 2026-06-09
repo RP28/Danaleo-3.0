@@ -4,12 +4,25 @@ import gzip
 from decimal import Decimal
 from io import BytesIO
 
+import nbformat
 import pandas as pd
 import pytest
 
 from danaleo.core.data_ingestion import is_supported_data_filename, source_format
 from danaleo.core.exporter import export_notebook
 from danaleo.core.session_store import WorkspaceStore
+
+
+def execute_exported_load(workspace_store: WorkspaceStore) -> pd.DataFrame:
+    notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
+    namespace: dict = {}
+    for cell in notebook.cells:
+        if cell.cell_type != "code":
+            continue
+        if cell.source.strip() == "df.head()":
+            break
+        exec(cell.source, namespace)
+    return namespace["df"]
 
 
 def test_supported_data_extensions_cover_common_tabular_formats():
@@ -297,3 +310,47 @@ def test_compressed_wrapped_json_notebook_export_uses_compression_reader():
 
     assert "__import__('gzip').open('wrapped.json.gz'" in notebook
     assert "['data']" in notebook
+
+
+def test_exported_notebook_load_matches_robust_ingestion(tmp_path, monkeypatch):
+    sources = [
+        (
+            "regional.csv",
+            "sep=;\nname;city;empty\nAndré;Montréal;\n;;\n".encode("cp1252"),
+        ),
+        (
+            "wrapped.json",
+            b'{"results":[{"name":"Alice","tags":["a","b"],"profile":{"city":"Sydney"}}]}',
+        ),
+    ]
+
+    excel_path = tmp_path / "report.xlsx"
+    with pd.ExcelWriter(excel_path) as writer:
+        pd.DataFrame().to_excel(writer, sheet_name="Cover", index=False)
+        pd.DataFrame({"name": ["Alice", "Bob"], "value": [1, 2]}).to_excel(
+            writer,
+            sheet_name="Data",
+            index=False,
+            startrow=2,
+        )
+    sources.append((excel_path.name, excel_path.read_bytes()))
+
+    parquet_path = tmp_path / "complex.parquet"
+    pd.DataFrame(
+        {
+            "raw": [b"hello", b"world"],
+            "tags": [["a", "b"], ["c"]],
+            "amount": [Decimal("12.34"), Decimal("56.78")],
+        },
+        index=pd.Index(["A", "B"], name="customer_id"),
+    ).to_parquet(parquet_path)
+    sources.append((parquet_path.name, parquet_path.read_bytes()))
+
+    monkeypatch.chdir(tmp_path)
+    for filename, source in sources:
+        (tmp_path / filename).write_bytes(source)
+        workspace_store = WorkspaceStore()
+        workspace_store.load_data(source, filename)
+        expected = workspace_store.sessions[workspace_store.active_session_id].data
+
+        pd.testing.assert_frame_equal(execute_exported_load(workspace_store), expected)
