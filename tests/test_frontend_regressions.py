@@ -241,6 +241,24 @@ def test_upload_zone_limits_to_csv_and_exposes_sampling_inputs():
     assert "setSampleMode('none')" in source
     assert "setSampleMode('n')" in source
     assert "setSampleMode('frac')" in source
+    assert "multiple" in source
+    assert "files.forEach((file) => form.append('file', file))" in source
+
+
+def test_dataset_tabs_support_upload_activation_and_deletion():
+    app = read_frontend("App.jsx")
+    tabs = read_frontend("components/DatasetTabs.jsx")
+    api = read_frontend("api.js")
+
+    assert "DatasetTabs" in app
+    assert "workspace.datasets.map" in tabs
+    assert "workspace.active_dataset_id" in tabs
+    assert "api.activateDataset(datasetId)" in tabs
+    assert "api.deleteDataset(dataset.id)" in tabs
+    assert "multiple" in tabs
+    assert "/api/datasets/activate" in api
+    assert "/api/datasets/${datasetId}" in api
+    assert "Clear workspace" in app
 
 
 def test_recent_session_operations_panel_removed_from_column_details():

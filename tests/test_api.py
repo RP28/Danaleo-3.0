@@ -97,6 +97,70 @@ def test_upload_with_sampling_modes(csv_bytes: bytes):
     assert fractional.json()["active_session"]["overview"]["rows"] == 4
 
 
+def test_multi_csv_upload_activation_deletion_and_progress_round_trip(csv_bytes: bytes):
+    client = TestClient(app)
+    uploaded = client.post(
+        "/api/upload",
+        files=[
+            ("file", ("customers.csv", csv_bytes, "text/csv")),
+            ("file", ("values.csv", b"value\n1\n2\n3\n", "text/csv")),
+        ],
+    )
+
+    assert uploaded.status_code == 200
+    workspace = uploaded.json()
+    assert [dataset["csv_name"] for dataset in workspace["datasets"]] == [
+        "customers.csv",
+        "values.csv",
+    ]
+    assert workspace["csv_name"] == "values.csv"
+    first_id, second_id = [dataset["id"] for dataset in workspace["datasets"]]
+
+    activated = client.post("/api/datasets/activate", json={"dataset_id": first_id})
+    assert activated.status_code == 200
+    assert activated.json()["csv_name"] == "customers.csv"
+
+    progress = client.get("/api/progress/download")
+    assert progress.status_code == 200
+    assert progress.headers["content-disposition"].endswith('filename="danaleo_workspace.danaleo"')
+
+    removed = client.delete(f"/api/datasets/{second_id}")
+    assert removed.status_code == 200
+    assert [dataset["id"] for dataset in removed.json()["datasets"]] == [first_id]
+
+    client.post("/api/workspace/reset")
+    restored = client.post(
+        "/api/progress/load",
+        files={"file": ("workspace.danaleo", progress.content, "application/zip")},
+    )
+    assert restored.status_code == 200
+    assert len(restored.json()["datasets"]) == 2
+    assert restored.json()["active_dataset_id"] == first_id
+
+    invalid_activate = client.post("/api/datasets/activate", json={"dataset_id": "missing"})
+    invalid_delete = client.delete("/api/datasets/missing")
+    assert invalid_activate.status_code == 400
+    assert invalid_delete.status_code == 400
+
+
+def test_multi_csv_upload_is_atomic_when_any_file_is_invalid(csv_bytes: bytes):
+    client = TestClient(app)
+    existing = upload_csv(client, b"x\n1\n", "existing.csv")
+
+    response = client.post(
+        "/api/upload",
+        files=[
+            ("file", ("valid.csv", csv_bytes, "text/csv")),
+            ("file", ("broken.csv", b'a,b\n1,"unterminated\n', "text/csv")),
+        ],
+    )
+
+    assert response.status_code == 400
+    workspace = client.get("/api/workspace").json()
+    assert workspace["active_dataset_id"] == existing["active_dataset_id"]
+    assert [dataset["csv_name"] for dataset in workspace["datasets"]] == ["existing.csv"]
+
+
 def test_api_end_to_end_workspace_flow(csv_bytes: bytes):
     client = TestClient(app)
 

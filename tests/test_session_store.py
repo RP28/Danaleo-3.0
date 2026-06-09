@@ -24,6 +24,8 @@ def test_workspace_summary_before_upload_is_safe():
     workspace = workspace_store.workspace_summary()
 
     assert workspace["ready"] is False
+    assert workspace["active_dataset_id"] is None
+    assert workspace["datasets"] == []
     assert workspace["csv_name"] is None
     assert workspace["active_session_id"] is None
     assert workspace["active_session"] is None
@@ -286,21 +288,120 @@ def test_session_summary_keeps_created_overview_separate_from_current_overview(
     assert child_summary["overview"]["columns"] == 4
 
 
-def test_reload_csv_resets_previous_sessions_and_plots(csv_bytes: bytes):
+def test_loading_another_csv_preserves_previous_dataset_state(csv_bytes: bytes):
     workspace_store = WorkspaceStore()
 
     first = workspace_store.load_csv(csv_bytes, "customers.csv")
+    first_dataset_id = first["active_dataset_id"]
     base_id = first["active_session_id"]
 
     workspace_store.create_session("Old branch", base_id)
     workspace_store.save_plot(base_id, "age", "histogram", controls={"bins": 4})
 
     second = workspace_store.load_csv(b"x,y\n1,A\n2,B\n", "new.csv")
+    second_dataset_id = second["active_dataset_id"]
 
     assert second["csv_name"] == "new.csv"
     assert second["active_session"]["overview"]["rows"] == 2
     assert len(second["sessions"]) == 1
     assert second["saved_plots"] == []
+    assert [dataset["csv_name"] for dataset in second["datasets"]] == ["customers.csv", "new.csv"]
+
+    restored_first = workspace_store.set_active_dataset(first_dataset_id)
+    assert restored_first["active_dataset_id"] == first_dataset_id
+    assert len(restored_first["sessions"]) == 2
+    assert len(restored_first["saved_plots"]) == 1
+
+    restored_second = workspace_store.set_active_dataset(second_dataset_id)
+    assert len(restored_second["sessions"]) == 1
+    assert restored_second["saved_plots"] == []
+
+
+def test_dataset_switching_and_cross_dataset_ids_keep_state_isolated():
+    workspace_store = WorkspaceStore()
+    first = workspace_store.load_csv(b"x\n1\n2\n", "first.csv")
+    first_dataset_id = first["active_dataset_id"]
+    first_session_id = first["active_session_id"]
+    workspace_store.apply_session_operation(first_session_id, "filter_rows", {"query": "x > 1"})
+    workspace_store.save_plot(first_session_id, "x", "histogram")
+    first_plot_id = next(iter(workspace_store.saved_plots))
+
+    second = workspace_store.load_csv(b"y\n10\n20\n30\n", "second.csv")
+    second_dataset_id = second["active_dataset_id"]
+    second_session_id = second["active_session_id"]
+    workspace_store.create_session("Second branch", second_session_id)
+
+    first_again = workspace_store.set_active_session(first_session_id)
+    assert first_again["active_dataset_id"] == first_dataset_id
+    assert first_again["active_session"]["overview"]["rows"] == 1
+    assert len(first_again["saved_plots"]) == 1
+
+    second_again = workspace_store.set_active_dataset(second_dataset_id)
+    assert len(second_again["sessions"]) == 2
+    assert second_again["saved_plots"] == []
+
+    updated = workspace_store.update_plot(first_plot_id, remark="first only")
+    assert updated["active_dataset_id"] == first_dataset_id
+    assert updated["saved_plots"][0]["remark"] == "first only"
+
+
+def test_delete_dataset_handles_active_inactive_final_and_unknown_datasets():
+    workspace_store = WorkspaceStore()
+    first = workspace_store.load_csv(b"x\n1\n", "first.csv")
+    first_id = first["active_dataset_id"]
+    second = workspace_store.load_csv(b"y\n2\n", "second.csv")
+    second_id = second["active_dataset_id"]
+    second_path = Path(workspace_store.csv_path)
+    third = workspace_store.load_csv(b"z\n3\n", "third.csv")
+    third_id = third["active_dataset_id"]
+
+    after_inactive_delete = workspace_store.delete_dataset(second_id)
+    assert not second_path.exists()
+    assert after_inactive_delete["active_dataset_id"] == third_id
+    assert [dataset["id"] for dataset in after_inactive_delete["datasets"]] == [first_id, third_id]
+
+    after_active_delete = workspace_store.delete_dataset(third_id)
+    assert after_active_delete["active_dataset_id"] == first_id
+
+    empty = workspace_store.delete_dataset(first_id)
+    assert empty["ready"] is False
+    assert empty["datasets"] == []
+
+    with pytest.raises(ValueError, match="Dataset not found"):
+        workspace_store.delete_dataset("missing")
+    with pytest.raises(ValueError, match="Dataset not found"):
+        workspace_store.set_active_dataset("missing")
+
+
+def test_batch_load_rolls_back_every_new_dataset_when_one_csv_fails():
+    workspace_store = WorkspaceStore()
+    original = workspace_store.load_csv(b"x\n1\n", "existing.csv")
+    original_time = workspace_store.time_counter
+
+    with pytest.raises(Exception):
+        workspace_store.load_csv_batch(
+            [
+                (b"a\n1\n", "valid.csv"),
+                (b'a,b\n1,"unterminated\n', "broken.csv"),
+            ]
+        )
+
+    workspace = workspace_store.workspace_summary()
+    assert workspace["active_dataset_id"] == original["active_dataset_id"]
+    assert [dataset["csv_name"] for dataset in workspace["datasets"]] == ["existing.csv"]
+    assert workspace_store.time_counter == original_time
+
+
+def test_reset_releases_all_dataset_sources():
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(b"x\n1\n", "first.csv")
+    workspace_store.load_csv(b"y\n2\n", "second.csv")
+    paths = [Path(dataset.csv_path) for dataset in workspace_store.datasets.values()]
+
+    workspace_store.reset()
+
+    assert not any(path.exists() for path in paths)
+    assert workspace_store.workspace_summary()["ready"] is False
 
 
 def test_delete_plot_removes_only_the_requested_saved_plot(loaded_store: WorkspaceStore):
@@ -368,7 +469,10 @@ def test_project_import_rejects_invalid_manifests(manifest, message):
 def test_project_import_rejects_missing_archive_members():
     buffer = BytesIO()
     with ZipFile(buffer, "w") as archive:
-        archive.writestr("manifest.json", "{}")
+        archive.writestr(
+            "manifest.json",
+            json.dumps({"format": "danaleo.project", "version": 1, "sessions": [{}]}),
+        )
 
     with pytest.raises(ValueError, match="missing required project data"):
         WorkspaceStore().import_project(buffer.getvalue())
@@ -458,7 +562,10 @@ def test_project_export_import_replays_operations_without_duplicate_session_data
         names = set(archive.namelist())
         manifest = archive.read("manifest.json").decode("utf-8")
 
-    assert names == {"manifest.json", "source.csv"}
+    assert names == {
+        "manifest.json",
+        f"datasets/{loaded_store.active_dataset_id}/source.csv",
+    }
     assert "\"data\"" not in manifest
 
     restored_store = WorkspaceStore()
@@ -475,3 +582,90 @@ def test_project_export_import_replays_operations_without_duplicate_session_data
     assert "segment" in restored_child.data.columns
     assert workspace["saved_plots"][0]["title"] == "Child ages"
     assert workspace["saved_plots"][0]["figure"]["image"].startswith("data:image/png;base64,")
+
+
+def test_multi_dataset_project_round_trip_preserves_all_sources_and_active_states(csv_bytes: bytes):
+    workspace_store = WorkspaceStore()
+    first = workspace_store.load_csv(csv_bytes, "customers.csv", sample_mode="n", sample_n=4)
+    first_dataset_id = first["active_dataset_id"]
+    first_session_id = first["active_session_id"]
+    workspace_store.save_plot(first_session_id, "age", "histogram", title="First ages")
+
+    second = workspace_store.load_csv(b"value,label\n1,A\n2,B\n3,C\n", "values.csv")
+    second_dataset_id = second["active_dataset_id"]
+    second_base_id = second["active_session_id"]
+    second_branch_id = workspace_store.create_session("Values branch", second_base_id)["active_session_id"]
+    workspace_store.apply_session_operation(second_branch_id, "filter_rows", {"query": "value > 1"})
+
+    exported = workspace_store.export_project()
+    with ZipFile(BytesIO(exported)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        names = set(archive.namelist())
+
+    assert manifest["version"] == 2
+    assert manifest["active_dataset_id"] == second_dataset_id
+    assert {dataset["id"] for dataset in manifest["datasets"]} == {first_dataset_id, second_dataset_id}
+    assert names == {
+        "manifest.json",
+        f"datasets/{first_dataset_id}/source.csv",
+        f"datasets/{second_dataset_id}/source.csv",
+    }
+
+    restored_store = WorkspaceStore()
+    restored = restored_store.import_project(exported)
+    assert restored["active_dataset_id"] == second_dataset_id
+    assert restored["active_session_id"] == second_branch_id
+    assert restored["active_session"]["overview"]["rows"] == 2
+    assert len(restored["datasets"]) == 2
+
+    restored_first = restored_store.set_active_dataset(first_dataset_id)
+    assert restored_first["sample_info"]["sample_n"] == 4
+    assert restored_first["saved_plots"][0]["title"] == "First ages"
+    assert restored_first["active_session"]["overview"]["rows"] == 4
+
+
+def test_v2_project_import_validates_datasets_sources_and_active_dataset_fallback():
+    base_dataset = {
+        "id": "first",
+        "csv_name": "first.csv",
+        "active_session_id": "base",
+        "sessions": [
+            {"id": "base", "name": "Base", "parent_id": None, "created_time": 1, "operations": []}
+        ],
+        "saved_plots": [],
+    }
+
+    def v2_bytes(datasets: list[dict], sources: dict[str, bytes]) -> bytes:
+        buffer = BytesIO()
+        with ZipFile(buffer, "w") as archive:
+            archive.writestr(
+                "manifest.json",
+                json.dumps(
+                    {
+                        "format": "danaleo.project",
+                        "version": 2,
+                        "active_dataset_id": "missing",
+                        "datasets": datasets,
+                    }
+                ),
+            )
+            for path, source in sources.items():
+                archive.writestr(path, source)
+        return buffer.getvalue()
+
+    restored = WorkspaceStore().import_project(
+        v2_bytes([base_dataset], {"datasets/first/source.csv": b"x\n1\n"})
+    )
+    assert restored["active_dataset_id"] == "first"
+
+    with pytest.raises(ValueError, match="missing required project data"):
+        WorkspaceStore().import_project(v2_bytes([base_dataset], {}))
+    with pytest.raises(ValueError, match="duplicate dataset ids"):
+        WorkspaceStore().import_project(
+            v2_bytes(
+                [base_dataset, base_dataset],
+                {"datasets/first/source.csv": b"x\n1\n"},
+            )
+        )
+    with pytest.raises(ValueError, match="without an id"):
+        WorkspaceStore().import_project(v2_bytes([{**base_dataset, "id": ""}], {}))

@@ -13,6 +13,11 @@ class CreateSessionRequest(BaseModel):
 class ActivateSessionRequest(BaseModel):
     session_id: str
 
+
+class ActivateDatasetRequest(BaseModel):
+    dataset_id: str
+
+
 class RenameSessionRequest(BaseModel):
     name: str = Field(min_length=1)
 

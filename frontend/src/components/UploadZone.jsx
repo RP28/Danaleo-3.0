@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import Toast from './Toast.jsx';
 
 export default function UploadZone({ onUploaded, onError, toast, setToast }) {
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [sampleMode, setSampleMode] = useState('none');
   const [sampleN, setSampleN] = useState(10000);
   const [sampleFrac, setSampleFrac] = useState(0.2);
@@ -14,9 +14,9 @@ export default function UploadZone({ onUploaded, onError, toast, setToast }) {
 
   async function submit(event) {
     event.preventDefault();
-    if (!file) return onError('Choose a CSV file first');
+    if (!files.length) return onError('Choose at least one CSV file first');
     const form = new FormData();
-    form.append('file', file);
+    files.forEach((file) => form.append('file', file));
     form.append('sample_mode', sampleMode);
     if (sampleMode === 'n') form.append('sample_n', sampleN);
     if (sampleMode === 'frac') form.append('sample_frac', sampleFrac);
@@ -53,12 +53,12 @@ export default function UploadZone({ onUploaded, onError, toast, setToast }) {
         <div className="brand-mark"><Database size={28}/></div>
         <p className="eyebrow">Danaleo 3.0</p>
         <h1>Interactive EDA workspace</h1>
-        <p className="muted wide">Upload a single CSV file. After upload, this screen disappears and the workspace opens.</p>
+        <p className="muted wide">Upload one or more CSV files. Each dataset opens in its own workspace tab.</p>
         <form onSubmit={submit} className="upload-form">
           <label className="dropzone">
             <Upload size={30}/>
-            <span>{file ? file.name : 'Click to choose a CSV file'}</span>
-            <input type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0])}/>
+            <span>{files.length ? `${files.length} CSV file(s) selected` : 'Click to choose CSV files'}</span>
+            <input type="file" accept=".csv,text/csv" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))}/>
           </label>
 
           <details className="soft-details">

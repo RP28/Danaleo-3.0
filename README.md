@@ -2,11 +2,12 @@
 
 Danaleo is a local interactive EDA workspace for CSV files.
 
-It runs a Python FastAPI backend and a React UI on localhost. You can upload a CSV, inspect columns, create dataframe sessions, apply operations, build plots, save plots with notes, view session history as a tree, and export the analysis as a Jupyter notebook.
+It runs a Python FastAPI backend and a React UI on localhost. You can upload multiple CSVs into separate dataset tabs, inspect columns, create dataframe sessions, apply operations, build plots, save plots with notes, view session history as a tree, and export the active analysis as a Jupyter notebook.
 
 ## Features
 
-* Upload CSV files
+* Upload multiple CSV files into independent dataset tabs
+* Save and restore every open CSV, session, and plot in one `.danaleo` workspace
 * Optional sampling during upload
 * Column overview and column-level statistics
 * Overview-first dataset profile with quality flags, correlations, and row preview

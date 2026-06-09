@@ -8,7 +8,8 @@ import SessionTree from './components/SessionTree.jsx';
 import SavedPlots from './components/SavedPlots.jsx';
 import OverviewDashboard from './components/OverviewDashboard.jsx';
 import Toast from './components/Toast.jsx';
-import { ArrowLeft, BarChart3, Download, GitBranch, LayoutDashboard, Save } from 'lucide-react';
+import DatasetTabs from './components/DatasetTabs.jsx';
+import { BarChart3, Download, GitBranch, LayoutDashboard, Save, Trash2 } from 'lucide-react';
 
 
 function nextBranchName(_parent, sessions) {
@@ -148,7 +149,7 @@ export default function App() {
   }, [applyWorkspace, workspace]);
 
   const resetToUpload = useCallback(async () => {
-    if (!window.confirm('Go back to CSV upload and discard all current progress?')) return;
+    if (!window.confirm('Clear all open datasets and discard current progress?')) return;
     try {
       const next = await api.resetWorkspace();
       setWorkspace(next);
@@ -170,12 +171,12 @@ export default function App() {
     }
   }, []);
 
-  const openWorkspace = useCallback((next) => {
+  const openWorkspace = useCallback((next, resetView = true) => {
     setWorkspace(next);
     setSelectedColumn(null);
     setColumnStats(null);
     setActiveFigure(null);
-    setActiveView('overview');
+    if (resetView) setActiveView('overview');
   }, []);
 
   if (!workspace?.ready) {
@@ -207,11 +208,17 @@ export default function App() {
             <h1>{workspace.csv_name}</h1>
           </div>
           <div className="topbar-actions">
-            <button className="ghost-btn" onClick={resetToUpload}><ArrowLeft size={16}/> CSV upload</button>
+            <button className="ghost-btn" onClick={resetToUpload}><Trash2 size={16}/> Clear workspace</button>
             <button className="ghost-btn" onClick={saveProgress}><Save size={16}/> Save progress</button>
             <button className="primary-btn" onClick={() => api.exportNotebook().catch((err) => setToast({ type: 'error', text: err.message }))}><Download size={16}/> Export ipynb</button>
           </div>
         </header>
+
+        <DatasetTabs
+          workspace={workspace}
+          onWorkspace={openWorkspace}
+          onError={(text) => setToast({ type: 'error', text })}
+        />
 
         <nav className="workspace-tabs" aria-label="Workspace sections">
           <button className={activeView === 'overview' ? 'active' : ''} onClick={() => setActiveView('overview')}><LayoutDashboard size={15}/> Overview</button>

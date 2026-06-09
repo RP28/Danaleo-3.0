@@ -53,22 +53,73 @@ class PlotRecord:
     title: str
 
 
+@dataclass
+class DatasetRecord:
+    id: str
+    csv_path: str
+    csv_name: str
+    sample_info: dict[str, Any] | None
+    active_session_id: str
+    sessions: dict[str, SessionRecord] = field(default_factory=dict)
+    saved_plots: dict[str, PlotRecord] = field(default_factory=dict)
+
+
 class WorkspaceStore:
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
-        self.csv_path: str | None = None
-        self.csv_name: str | None = None
+        for dataset in getattr(self, "datasets", {}).values():
+            Path(dataset.csv_path).unlink(missing_ok=True)
         self.time_counter = 0
-        self.active_session_id: str | None = None
-        self.sessions: dict[str, SessionRecord] = {}
-        self.saved_plots: dict[str, PlotRecord] = {}
-        self.sample_info: dict[str, Any] | None = None
+        self.active_dataset_id: str | None = None
+        self.datasets: dict[str, DatasetRecord] = {}
+
+    @property
+    def active_dataset(self) -> DatasetRecord | None:
+        if not self.active_dataset_id:
+            return None
+        return self.datasets.get(self.active_dataset_id)
+
+    @property
+    def csv_path(self) -> str | None:
+        return self.active_dataset.csv_path if self.active_dataset else None
+
+    @property
+    def csv_name(self) -> str | None:
+        return self.active_dataset.csv_name if self.active_dataset else None
+
+    @property
+    def sample_info(self) -> dict[str, Any] | None:
+        return self.active_dataset.sample_info if self.active_dataset else None
+
+    @property
+    def active_session_id(self) -> str | None:
+        return self.active_dataset.active_session_id if self.active_dataset else None
+
+    @active_session_id.setter
+    def active_session_id(self, value: str) -> None:
+        if not self.active_dataset:
+            raise ValueError("Upload a CSV file first")
+        self.active_dataset.active_session_id = value
+
+    @property
+    def sessions(self) -> dict[str, SessionRecord]:
+        return self.active_dataset.sessions if self.active_dataset else {}
+
+    @property
+    def saved_plots(self) -> dict[str, PlotRecord]:
+        return self.active_dataset.saved_plots if self.active_dataset else {}
+
+    @saved_plots.setter
+    def saved_plots(self, value: dict[str, PlotRecord]) -> None:
+        if not self.active_dataset:
+            raise ValueError("Upload a CSV file first")
+        self.active_dataset.saved_plots = value
 
     @property
     def ready(self) -> bool:
-        return bool(self.sessions and self.active_session_id)
+        return bool(self.datasets and self.active_dataset)
 
     def _tick(self) -> int:
         self.time_counter += 1
@@ -125,13 +176,10 @@ class WorkspaceStore:
             random_state,
         )
 
-        self.reset()
-        self.csv_path = tmp_path
-        self.csv_name = filename
-        self.sample_info = sample_info
+        dataset_id = uuid4().hex
         base_id = uuid4().hex
         created_time = self._tick()
-        self.sessions[base_id] = SessionRecord(
+        base_session = SessionRecord(
             id=base_id,
             name="Base Session",
             parent_id=None,
@@ -149,13 +197,86 @@ class WorkspaceStore:
             ],
             data=df,
         )
-        self.active_session_id = base_id
+        self.datasets[dataset_id] = DatasetRecord(
+            id=dataset_id,
+            csv_path=tmp_path,
+            csv_name=filename,
+            sample_info=sample_info,
+            active_session_id=base_id,
+            sessions={base_id: base_session},
+        )
+        self.active_dataset_id = dataset_id
         return self.workspace_summary()
+
+    def set_active_dataset(self, dataset_id: str) -> dict[str, Any]:
+        if dataset_id not in self.datasets:
+            raise ValueError("Dataset not found")
+        self.active_dataset_id = dataset_id
+        return self.workspace_summary()
+
+    def delete_dataset(self, dataset_id: str) -> dict[str, Any]:
+        if dataset_id not in self.datasets:
+            raise ValueError("Dataset not found")
+        deleted = self.datasets.pop(dataset_id)
+        Path(deleted.csv_path).unlink(missing_ok=True)
+        if not self.datasets:
+            self.active_dataset_id = None
+        elif self.active_dataset_id == dataset_id:
+            self.active_dataset_id = next(iter(self.datasets))
+        return self.workspace_summary()
+
+    def load_csv_batch(
+        self,
+        files: list[tuple[bytes, str]],
+        sample_mode: str = "none",
+        sample_n: int | None = None,
+        sample_frac: float | None = None,
+        random_state: int = 42,
+    ) -> dict[str, Any]:
+        if not files:
+            raise ValueError("Choose at least one CSV file")
+
+        previous_ids = set(self.datasets)
+        previous_active_dataset_id = self.active_dataset_id
+        previous_time = self.time_counter
+        try:
+            for file_bytes, filename in files:
+                self.load_csv(
+                    file_bytes,
+                    filename,
+                    sample_mode,
+                    sample_n,
+                    sample_frac,
+                    random_state,
+                )
+        except Exception:
+            for dataset_id, dataset in self.datasets.items():
+                if dataset_id not in previous_ids:
+                    Path(dataset.csv_path).unlink(missing_ok=True)
+            self.datasets = {
+                dataset_id: dataset
+                for dataset_id, dataset in self.datasets.items()
+                if dataset_id in previous_ids
+            }
+            self.active_dataset_id = previous_active_dataset_id
+            self.time_counter = previous_time
+            raise
+        return self.workspace_summary()
+
+    def _activate_dataset_for_session(self, session_id: str) -> None:
+        if session_id in self.sessions:
+            return
+        for dataset in self.datasets.values():
+            if session_id in dataset.sessions:
+                self.active_dataset_id = dataset.id
+                return
 
     def require_session(self, session_id: str | None = None) -> SessionRecord:
         if not self.ready:
             raise ValueError("Upload a CSV file first")
         sid = session_id or self.active_session_id
+        if sid:
+            self._activate_dataset_for_session(sid)
         if not sid or sid not in self.sessions:
             raise ValueError("Session not found")
         return self.sessions[sid]
@@ -310,6 +431,7 @@ class WorkspaceStore:
         return self.workspace_summary()
 
     def update_plot(self, plot_id: str, include_in_export: bool | None = None, remark: str | None = None) -> dict[str, Any]:
+        self._activate_dataset_for_plot(plot_id)
         if plot_id not in self.saved_plots:
             raise ValueError("Plot not found")
         plot = self.saved_plots[plot_id]
@@ -320,21 +442,27 @@ class WorkspaceStore:
         return self.workspace_summary()
 
     def delete_plot(self, plot_id: str) -> dict[str, Any]:
+        self._activate_dataset_for_plot(plot_id)
         if plot_id not in self.saved_plots:
             raise ValueError("Plot not found")
         self.saved_plots.pop(plot_id)
         return self.workspace_summary()
 
-    def _project_manifest(self) -> dict[str, Any]:
-        if not self.ready:
-            raise ValueError("Upload a CSV file first")
+    def _activate_dataset_for_plot(self, plot_id: str) -> None:
+        if plot_id in self.saved_plots:
+            return
+        for dataset in self.datasets.values():
+            if plot_id in dataset.saved_plots:
+                self.active_dataset_id = dataset.id
+                return
+
+    def _dataset_manifest(self, dataset: DatasetRecord) -> dict[str, Any]:
         return {
-            "format": "danaleo.project",
-            "version": 1,
-            "csv_name": self.csv_name,
-            "sample_info": self.sample_info,
-            "active_session_id": self.active_session_id,
-            "time_counter": self.time_counter,
+            "id": dataset.id,
+            "csv_name": dataset.csv_name,
+            "sample_info": dataset.sample_info,
+            "active_session_id": dataset.active_session_id,
+            "source_path": f"datasets/{dataset.id}/source.csv",
             "sessions": [
                 {
                     "id": session.id,
@@ -345,7 +473,7 @@ class WorkspaceStore:
                     "source_operation_id": session.source_operation_id,
                     "operations": [op.__dict__ for op in session.operations],
                 }
-                for session in sorted(self.sessions.values(), key=lambda item: item.created_time)
+                for session in sorted(dataset.sessions.values(), key=lambda item: item.created_time)
             ],
             "saved_plots": [
                 {
@@ -361,63 +489,63 @@ class WorkspaceStore:
                     "created_time": plot.created_time,
                     "title": plot.title,
                 }
-                for plot in sorted(self.saved_plots.values(), key=lambda item: item.created_time)
+                for plot in sorted(dataset.saved_plots.values(), key=lambda item: item.created_time)
             ],
+        }
+
+    def _project_manifest(self) -> dict[str, Any]:
+        if not self.ready:
+            raise ValueError("Upload a CSV file first")
+        return {
+            "format": "danaleo.project",
+            "version": 2,
+            "active_dataset_id": self.active_dataset_id,
+            "time_counter": self.time_counter,
+            "datasets": [self._dataset_manifest(dataset) for dataset in self.datasets.values()],
         }
 
     def export_project(self) -> bytes:
         if not self.ready:
             raise ValueError("Upload a CSV file first")
-        if not self.csv_path or not Path(self.csv_path).exists():
-            raise ValueError("Source CSV is no longer available")
+        for dataset in self.datasets.values():
+            if not Path(dataset.csv_path).exists():
+                raise ValueError(f"Source CSV is no longer available: {dataset.csv_name}")
 
         buffer = BytesIO()
         with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
-            archive.writestr("manifest.json", json.dumps(self._project_manifest(), indent=2))
-            archive.write(self.csv_path, "source.csv")
+            manifest = self._project_manifest()
+            archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+            for dataset in self.datasets.values():
+                archive.write(dataset.csv_path, f"datasets/{dataset.id}/source.csv")
         return buffer.getvalue()
 
-    def import_project(self, project_bytes: bytes) -> dict[str, Any]:
-        with ZipFile(BytesIO(project_bytes)) as archive:
-            try:
-                manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
-                source_bytes = archive.read("source.csv")
-            except KeyError as exc:
-                raise ValueError("Saved progress file is missing required project data") from exc
-
-        if manifest.get("format") != "danaleo.project" or manifest.get("version") != 1:
-            raise ValueError("Unsupported saved progress file")
-
-        csv_name = str(manifest.get("csv_name") or "source.csv")
+    def _restore_dataset(self, raw: dict[str, Any], source_bytes: bytes) -> DatasetRecord:
+        csv_name = str(raw.get("csv_name") or "source.csv")
         suffix = Path(csv_name).suffix or ".csv"
         with NamedTemporaryFile(delete=False, suffix=suffix, prefix="danaleo_") as tmp:
             tmp.write(source_bytes)
             tmp_path = tmp.name
 
-        sample_info = manifest.get("sample_info")
+        sample_info = raw.get("sample_info")
         if sample_info:
-            mode = sample_info.get("mode", "none")
             df, restored_sample_info = self._read_csv_with_sampling(
                 tmp_path,
-                mode,
+                sample_info.get("mode", "none"),
                 sample_info.get("sample_n"),
                 sample_info.get("sample_frac"),
                 sample_info.get("random_state", 42),
             )
             if restored_sample_info:
-                restored_sample_info["original_rows"] = sample_info.get(
-                    "original_rows",
-                    restored_sample_info["original_rows"],
-                )
+                restored_sample_info["original_rows"] = sample_info.get("original_rows", restored_sample_info["original_rows"])
         else:
             df, restored_sample_info = self._read_csv_with_sampling(tmp_path)
 
-        raw_sessions = manifest.get("sessions") or []
+        raw_sessions = raw.get("sessions") or []
         if not raw_sessions:
             raise ValueError("Saved progress file does not contain any sessions")
 
         records: dict[str, SessionRecord] = {}
-        for raw in raw_sessions:
+        for item in raw_sessions:
             operations = [
                 OperationRecord(
                     id=str(op["id"]),
@@ -426,17 +554,16 @@ class WorkspaceStore:
                     params=dict(op.get("params") or {}),
                     time=int(op["time"]),
                 )
-                for op in raw.get("operations", [])
+                for op in item.get("operations", [])
             ]
             record = SessionRecord(
-                id=str(raw["id"]),
-                name=str(raw["name"]),
-                parent_id=raw.get("parent_id"),
-                created_time=int(raw["created_time"]),
-                created_overview=dict(raw.get("created_overview") or {}),
-                source_operation_id=raw.get("source_operation_id"),
+                id=str(item["id"]),
+                name=str(item["name"]),
+                parent_id=item.get("parent_id"),
+                created_time=int(item["created_time"]),
+                created_overview=dict(item.get("created_overview") or {}),
+                source_operation_id=item.get("source_operation_id"),
                 operations=operations,
-                data=pd.DataFrame(),
             )
             records[record.id] = record
 
@@ -446,16 +573,10 @@ class WorkspaceStore:
             cache_key = (session_id, stop_operation_id)
             if cache_key in materialized:
                 return materialized[cache_key].copy()
-
             if session_id not in records:
                 raise ValueError("Saved progress file references a missing session")
-
             session = records[session_id]
-            if session.parent_id is None:
-                current = df.copy()
-            else:
-                current = build_session_data(session.parent_id, session.source_operation_id)
-
+            current = df.copy() if session.parent_id is None else build_session_data(session.parent_id, session.source_operation_id)
             found_stop = stop_operation_id is None
             for operation in session.operations:
                 if operation.operation_type == "created_session":
@@ -467,10 +588,8 @@ class WorkspaceStore:
                 if operation.id == stop_operation_id:
                     found_stop = True
                     break
-
             if not found_stop:
                 raise ValueError("Saved progress file references a missing operation")
-
             materialized[cache_key] = current.copy()
             return current
 
@@ -478,52 +597,90 @@ class WorkspaceStore:
             record.data = build_session_data(record.id)
 
         plots: dict[str, PlotRecord] = {}
-        for raw in manifest.get("saved_plots") or []:
-            session_id = str(raw["session_id"])
+        for item in raw.get("saved_plots") or []:
+            session_id = str(item["session_id"])
             if session_id not in records:
                 continue
-            controls = dict(raw.get("controls") or {})
-            figure = build_figure(
-                records[session_id].data,
-                str(raw["column"]),
-                str(raw["plot_type"]),
-                str(raw.get("local_query") or ""),
-                controls,
-            )
+            controls = dict(item.get("controls") or {})
             plot = PlotRecord(
-                id=str(raw["id"]),
+                id=str(item["id"]),
                 session_id=session_id,
-                session_name=str(raw.get("session_name") or records[session_id].name),
-                column=str(raw["column"]),
-                plot_type=str(raw["plot_type"]),
-                local_query=str(raw.get("local_query") or ""),
+                session_name=str(item.get("session_name") or records[session_id].name),
+                column=str(item["column"]),
+                plot_type=str(item["plot_type"]),
+                local_query=str(item.get("local_query") or ""),
                 controls=controls,
-                figure=figure,
-                include_in_export=bool(raw.get("include_in_export", True)),
-                remark=str(raw.get("remark") or ""),
-                created_time=int(raw["created_time"]),
-                title=str(raw.get("title") or f"{raw['plot_type']} - {raw['column']}"),
+                figure=build_figure(records[session_id].data, str(item["column"]), str(item["plot_type"]), str(item.get("local_query") or ""), controls),
+                include_in_export=bool(item.get("include_in_export", True)),
+                remark=str(item.get("remark") or ""),
+                created_time=int(item["created_time"]),
+                title=str(item.get("title") or f"{item['plot_type']} - {item['column']}"),
             )
             plots[plot.id] = plot
 
-        active_session_id = manifest.get("active_session_id")
+        active_session_id = raw.get("active_session_id")
         if active_session_id not in records:
             active_session_id = sorted(records.values(), key=lambda item: item.created_time)[0].id
-
-        max_time = max(
-            [int(manifest.get("time_counter") or 0)]
-            + [session.created_time for session in records.values()]
-            + [op.time for session in records.values() for op in session.operations]
-            + [plot.created_time for plot in plots.values()]
+        return DatasetRecord(
+            id=str(raw.get("id") or uuid4().hex),
+            csv_path=tmp_path,
+            csv_name=csv_name,
+            sample_info=restored_sample_info,
+            active_session_id=str(active_session_id),
+            sessions=records,
+            saved_plots=plots,
         )
 
+    def import_project(self, project_bytes: bytes) -> dict[str, Any]:
+        with ZipFile(BytesIO(project_bytes)) as archive:
+            try:
+                manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+            except KeyError as exc:
+                raise ValueError("Saved progress file is missing required project data") from exc
+
+            if manifest.get("format") != "danaleo.project" or manifest.get("version") not in {1, 2}:
+                raise ValueError("Unsupported saved progress file")
+
+            if manifest.get("version") == 1:
+                try:
+                    source_bytes = archive.read("source.csv")
+                except KeyError as exc:
+                    raise ValueError("Saved progress file is missing required project data") from exc
+                raw_datasets = [{**manifest, "id": uuid4().hex}]
+                source_by_id = {raw_datasets[0]["id"]: source_bytes}
+            else:
+                raw_datasets = manifest.get("datasets") or []
+                if not raw_datasets:
+                    raise ValueError("Saved progress file does not contain any datasets")
+                dataset_ids = [str(raw.get("id") or "") for raw in raw_datasets]
+                if any(not dataset_id for dataset_id in dataset_ids):
+                    raise ValueError("Saved progress file contains a dataset without an id")
+                if len(set(dataset_ids)) != len(dataset_ids):
+                    raise ValueError("Saved progress file contains duplicate dataset ids")
+                try:
+                    source_by_id = {
+                        str(raw["id"]): archive.read(str(raw.get("source_path") or f"datasets/{raw['id']}/source.csv"))
+                        for raw in raw_datasets
+                    }
+                except KeyError as exc:
+                    raise ValueError("Saved progress file is missing required project data") from exc
+
+        restored = {
+            str(raw["id"]): self._restore_dataset(raw, source_by_id[str(raw["id"])])
+            for raw in raw_datasets
+        }
+        max_time = max(
+            [int(manifest.get("time_counter") or 0)]
+            + [session.created_time for dataset in restored.values() for session in dataset.sessions.values()]
+            + [op.time for dataset in restored.values() for session in dataset.sessions.values() for op in session.operations]
+            + [plot.created_time for dataset in restored.values() for plot in dataset.saved_plots.values()]
+        )
+        active_dataset_id = manifest.get("active_dataset_id")
+        if active_dataset_id not in restored:
+            active_dataset_id = next(iter(restored))
         self.reset()
-        self.csv_path = tmp_path
-        self.csv_name = csv_name
-        self.sample_info = restored_sample_info
-        self.sessions = records
-        self.saved_plots = plots
-        self.active_session_id = str(active_session_id)
+        self.datasets = restored
+        self.active_dataset_id = str(active_dataset_id)
         self.time_counter = max_time
         return self.workspace_summary()
 
@@ -543,10 +700,25 @@ class WorkspaceStore:
             summary["profile"] = dataset_profile(session.data)
         return summary
 
+    def dataset_summary(self, dataset: DatasetRecord) -> dict[str, Any]:
+        active = dataset.sessions[dataset.active_session_id]
+        return {
+            "id": dataset.id,
+            "csv_name": dataset.csv_name,
+            "sample_info": dataset.sample_info,
+            "active_session_id": dataset.active_session_id,
+            "rows": len(active.data),
+            "columns": len(active.data.columns),
+            "sessions": len(dataset.sessions),
+            "saved_plots": len(dataset.saved_plots),
+        }
+
     def workspace_summary(self) -> dict[str, Any]:
         active = self.require_session(self.active_session_id) if self.ready else None
         return {
             "ready": self.ready,
+            "active_dataset_id": self.active_dataset_id,
+            "datasets": [self.dataset_summary(dataset) for dataset in self.datasets.values()],
             "csv_name": self.csv_name,
             "csv_path": self.csv_path,
             "sample_info": self.sample_info,

@@ -12,6 +12,7 @@ from danaleo.core.session_store import store
 from danaleo.core.stats import column_stats
 from danaleo.server.models import (
     ActivateSessionRequest,
+    ActivateDatasetRequest,
     CreateSessionRequest,
     OperationRequest,
     PlotRequest,
@@ -75,17 +76,42 @@ def reset_workspace() -> dict:
 
 @app.post("/api/upload")
 async def upload_csv(
-    file: UploadFile = File(...),
+    file: list[UploadFile] = File(...),
     sample_mode: str = Form("none"),
     sample_n: int | None = Form(None),
     sample_frac: float | None = Form(None),
     random_state: int = Form(42),
 ) -> dict:
-    if not file.filename or not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Please upload a CSV file")
     try:
-        content = await file.read()
-        return store.load_csv(content, file.filename, sample_mode, sample_n, sample_frac, random_state)
+        uploads: list[tuple[bytes, str]] = []
+        for uploaded in file:
+            if not uploaded.filename or not uploaded.filename.lower().endswith(".csv"):
+                raise ValueError("Please upload CSV files only")
+            content = await uploaded.read()
+            uploads.append((content, uploaded.filename))
+        return store.load_csv_batch(
+            uploads,
+            sample_mode,
+            sample_n,
+            sample_frac,
+            random_state,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/datasets/activate")
+def activate_dataset(payload: ActivateDatasetRequest) -> dict:
+    try:
+        return store.set_active_dataset(payload.dataset_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/datasets/{dataset_id}")
+def delete_dataset(dataset_id: str) -> dict:
+    try:
+        return store.delete_dataset(dataset_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -94,7 +120,7 @@ async def upload_csv(
 def download_progress() -> Response:
     try:
         data = store.export_project()
-        base_name = (store.csv_name or "danaleo_progress.csv").rsplit(".", 1)[0]
+        base_name = "danaleo_workspace" if len(store.datasets) > 1 else (store.csv_name or "danaleo_progress.csv").rsplit(".", 1)[0]
         return Response(
             data,
             media_type="application/vnd.danaleo.project+zip",

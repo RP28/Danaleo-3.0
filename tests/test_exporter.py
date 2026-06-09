@@ -300,3 +300,20 @@ def test_export_without_saved_plots_has_no_selected_plots_section(csv_bytes: byt
 
     assert "# Selected plots" not in combined_sources
     assert "sns." not in combined_sources
+
+
+def test_export_notebook_uses_only_the_active_dataset():
+    workspace_store = WorkspaceStore()
+    first = workspace_store.load_csv(b"x\n1\n2\n", "first.csv")
+    first_dataset_id = first["active_dataset_id"]
+    workspace_store.save_plot(first["active_session_id"], "x", "histogram", title="First plot")
+
+    workspace_store.load_csv(b"y\n10\n20\n", "second.csv")
+    second_sources = notebook_sources(export_notebook(workspace_store))
+    assert "Danaleo EDA Export: second.csv" in second_sources
+    assert "First plot" not in second_sources
+
+    workspace_store.set_active_dataset(first_dataset_id)
+    first_sources = notebook_sources(export_notebook(workspace_store))
+    assert "Danaleo EDA Export: first.csv" in first_sources
+    assert "First plot" in first_sources

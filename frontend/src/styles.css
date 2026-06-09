@@ -975,6 +975,58 @@ textarea {
   border-radius: 12px;
   background: rgba(12, 16, 24, 0.72);
 }
+.dataset-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.dataset-tab-scroll {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+}
+.dataset-tab {
+  min-width: 175px;
+  max-width: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0;
+  border: 1px solid var(--borderSoft);
+  border-radius: 11px 11px 4px 4px;
+  background: var(--panelSoft);
+  color: var(--muted);
+  text-align: left;
+}
+.dataset-tab.active { border-color: var(--accent); color: var(--text); background: rgba(51, 214, 197, 0.08); }
+.dataset-tab-main {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  padding: 8px 0 8px 9px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.dataset-tab strong, .dataset-tab small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dataset-tab small { margin-top: 2px; color: var(--muted); font-size: 10px; }
+.dataset-tab-close {
+  display: grid;
+  place-items: center;
+  margin-right: 7px;
+  padding: 3px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+.dataset-tab-close:hover { background: rgba(255, 100, 124, 0.12); color: var(--danger); }
+.dataset-add { flex: 0 0 auto; }
+.dataset-add input { display: none; }
 .workspace-tabs button,
 .kind-filter button {
   display: inline-flex;

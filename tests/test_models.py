@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from danaleo.server.models import CreateSessionRequest, PlotRequest, SavePlotRequest, UpdatePlotRequest
+from danaleo.server.models import (
+    ActivateDatasetRequest,
+    CreateSessionRequest,
+    PlotRequest,
+    SavePlotRequest,
+    UpdatePlotRequest,
+)
 
 
 def test_session_and_plot_requests_validate_required_fields():
@@ -28,3 +34,6 @@ def test_request_defaults_are_independent_and_export_defaults_are_stable():
     update = UpdatePlotRequest()
     assert update.include_in_export is None
     assert update.remark is None
+
+    dataset = ActivateDatasetRequest(dataset_id="dataset-1")
+    assert dataset.dataset_id == "dataset-1"

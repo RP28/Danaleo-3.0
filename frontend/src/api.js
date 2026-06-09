@@ -19,6 +19,11 @@ export const api = {
   workspace: () => request('/api/workspace'),
   resetWorkspace: () => request('/api/workspace/reset', { method: 'POST' }),
   upload: (formData) => request('/api/upload', { method: 'POST', body: formData }),
+  activateDataset: (datasetId) => request('/api/datasets/activate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataset_id: datasetId })
+  }),
+  deleteDataset: (datasetId) => request(`/api/datasets/${datasetId}`, { method: 'DELETE' }),
   loadProgress: (formData) => request('/api/progress/load', { method: 'POST', body: formData }),
   createSession: (name, parentId) => request('/api/sessions', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
