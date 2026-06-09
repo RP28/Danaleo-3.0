@@ -58,7 +58,10 @@ def test_export_notebook_recreates_sessions_operations_selected_plots(csv_bytes:
     assert "df_sydney_cleanup = df_sydney_cleanup.dropna(subset=['income']).copy()" in combined_sources
     assert "Income distribution after filtering." in combined_sources
     assert "Filtered income" in combined_sources
-    assert "build_figure(" in combined_sources
+    assert "sns.histplot(" in combined_sources
+    assert "def _plot" not in combined_sources
+    assert "from danaleo" not in combined_sources
+    assert "import danaleo" not in combined_sources
     assert "Skipped segment plot" not in combined_sources
 
 
@@ -144,6 +147,36 @@ def test_export_replays_replace_values_and_drop_missing_operations(csv_bytes: by
     assert "df = df.dropna(subset=['income']).copy()" in combined_sources
 
 
+def test_export_replays_drop_duplicates_operation():
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(b"x,y\n1,A\n1,A\n2,B\n", "duplicates.csv")
+    workspace_store.apply_session_operation(
+        workspace_store.active_session_id,
+        "drop_duplicates",
+        {},
+    )
+
+    combined_sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "df = df.drop_duplicates().copy()" in combined_sources
+
+
+def test_export_describes_dataset_level_plot_scope(csv_bytes: bytes):
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(csv_bytes, "customers.csv")
+    workspace_store.save_plot(
+        workspace_store.active_session_id,
+        "age",
+        "correlation_heatmap",
+        title="Pearson correlation heatmap",
+    )
+
+    combined_sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "Scope: **full dataset**" in combined_sources
+    assert "Column: `age`" not in combined_sources
+
+
 def test_export_includes_group_and_subplot_plot_context(csv_bytes: bytes):
     workspace_store = WorkspaceStore()
     workspace_store.load_csv(csv_bytes, "customers.csv")
@@ -172,4 +205,51 @@ def test_export_includes_group_and_subplot_plot_context(csv_bytes: bytes):
     assert "Grouped and subplot export check" in combined_sources
     assert "Group by: `segment`" in combined_sources
     assert "Subplot columns: `age`, `income`" in combined_sources
-    assert "build_figure(" in combined_sources
+    assert "sns.histplot(" in combined_sources
+
+
+def test_exported_notebook_plot_code_uses_only_standalone_libraries(csv_bytes: bytes):
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(csv_bytes, "customers.csv")
+    base_id = workspace_store.active_session_id
+    workspace_store.save_plot(
+        base_id,
+        "age",
+        "scatter",
+        controls={"compare_with": "income", "group_by": "segment"},
+    )
+
+    notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
+    code_sources = "\n\n".join(cell.source for cell in notebook.cells if cell.cell_type == "code")
+
+    assert "danaleo.core" not in code_sources
+    assert "import danaleo" not in code_sources
+    assert "import pandas as pd" in code_sources
+    assert "import numpy as np" in code_sources
+    assert "import matplotlib.pyplot as plt" in code_sources
+    assert "import seaborn as sns" in code_sources
+    assert "def _plot" not in code_sources
+    assert "sns.scatterplot(" in code_sources
+    for cell in notebook.cells:
+        if cell.cell_type == "code":
+            compile(cell.source, "<exported-notebook-cell>", "exec")
+
+
+def test_exported_plot_cells_do_not_define_plotting_helpers(csv_bytes: bytes):
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(csv_bytes, "customers.csv")
+    base_id = workspace_store.active_session_id
+    workspace_store.save_plot(base_id, "age", "histogram", controls={"bins": 12})
+    workspace_store.save_plot(
+        base_id,
+        "age",
+        "correlation_heatmap",
+        controls={"show_values": True},
+    )
+
+    notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
+    code_sources = [cell.source for cell in notebook.cells if cell.cell_type == "code"]
+
+    assert not any(source.lstrip().startswith("def ") for source in code_sources)
+    assert any("sns.histplot(" in source for source in code_sources)
+    assert any("sns.heatmap(" in source for source in code_sources)

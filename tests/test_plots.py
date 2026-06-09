@@ -5,7 +5,7 @@ import base64
 import pandas as pd
 import pytest
 
-from danaleo.core.plots import build_figure, plotly_code
+from danaleo.core.plots import build_figure, notebook_plot_code
 
 
 @pytest.fixture
@@ -192,8 +192,8 @@ def test_subplot_rejects_unknown_column(plot_df):
         )
 
 
-def test_plotly_code_keeps_notebook_export_reproducible():
-    code = plotly_code(
+def test_notebook_plot_code_keeps_notebook_export_reproducible():
+    code = notebook_plot_code(
         "histogram",
         "df_branch",
         "value",
@@ -201,11 +201,27 @@ def test_plotly_code_keeps_notebook_export_reproducible():
         {"bins": 8},
     )
 
-    assert "from danaleo.core.plots import build_figure" in code
-    assert "_danaleo_plot = build_figure(" in code
-    assert "df_branch" in code
-    assert "column='value'" in code
-    assert "plot_type='histogram'" in code
-    assert "local_query=\"group == 'A'\"" in code
-    assert "controls={'bins': 8}" in code
-    assert "display(Image(data=b64decode(_danaleo_png)))" in code
+    assert "danaleo" not in code.lower()
+    assert "def " not in code
+    assert "_plot_df = df_branch.query(\"group == 'A'\").copy()" in code
+    assert "sns.histplot(" in code
+    assert "x='value'" in code
+    assert "bins=8" in code
+    assert "plt.show()" in code
+
+
+def test_notebook_plot_code_is_direct_and_executable(plot_df):
+    pytest.importorskip("seaborn")
+    namespace = {}
+    exec("import numpy as np\nimport pandas as pd\nimport matplotlib.pyplot as plt\nimport seaborn as sns", namespace)
+    namespace["df_branch"] = plot_df
+
+    code = notebook_plot_code(
+        "scatter",
+        "df_branch",
+        "value",
+        controls={"compare_with": "other", "group_by": "group"},
+    )
+    assert "def " not in code
+    assert "sns.scatterplot(" in code
+    exec(code, namespace)

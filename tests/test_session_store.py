@@ -138,6 +138,17 @@ def test_sessions_are_independent_copies(loaded_store: WorkspaceStore):
     assert loaded_store.sessions[child_id].operations[-1].label == "Filter: age > 30"
 
 
+def test_drop_duplicates_is_recorded_in_session_history():
+    workspace_store = WorkspaceStore()
+    workspace = workspace_store.load_csv(b"x,y\n1,A\n1,A\n2,B\n", "duplicates.csv")
+    session_id = workspace["active_session_id"]
+
+    next_workspace = workspace_store.apply_session_operation(session_id, "drop_duplicates", {})
+
+    assert next_workspace["active_session"]["overview"]["rows"] == 2
+    assert next_workspace["active_session"]["operations"][-1]["label"] == "Drop duplicate rows"
+
+
 def test_child_session_created_after_parent_operations_uses_current_snapshot_but_not_future_parent_changes(
     loaded_store: WorkspaceStore,
 ):

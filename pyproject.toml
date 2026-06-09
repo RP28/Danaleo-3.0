@@ -18,6 +18,7 @@ dependencies = [
     "numpy>=1.26",
     "plotly>=5.22",
     "matplotlib>=3.8",
+    "seaborn>=0.13",
     "nbformat>=5.10",
     "pydantic>=2.7",
 ]

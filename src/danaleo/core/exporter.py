@@ -7,7 +7,7 @@ from typing import Any
 
 import nbformat as nbf
 
-from danaleo.core.plots import plotly_code
+from danaleo.core.plots import notebook_plot_code
 from danaleo.core.session_store import WorkspaceStore
 
 
@@ -46,6 +46,9 @@ def _operation_code(df_var: str, operation_type: str, params: dict[str, Any]) ->
         col = params.get("column", "")
         return f"{df_var} = {df_var}.dropna(subset={[col]!r}).copy()"
 
+    if operation_type == "drop_duplicates":
+        return f"{df_var} = {df_var}.drop_duplicates().copy()"
+
     return f"# Operation not exported yet: {operation_type}"
 
 
@@ -60,6 +63,9 @@ def _session_creation_code(session, var_by_session: dict[str, str], store: Works
 
 
 def _plot_columns_text(plot) -> str:
+    if plot.plot_type in {"correlation_heatmap", "missing_values"}:
+        return "Scope: **full dataset**"
+
     controls = plot.controls or {}
     group_col = controls.get("group_by") or controls.get("split_by") or controls.get("hue") or controls.get("color_by")
     subplot_enabled = bool(controls.get("subplot_enabled") or controls.get("subplots"))
@@ -98,9 +104,8 @@ def export_notebook(store: WorkspaceStore) -> bytes:
         nbf.v4.new_code_cell(
             "import pandas as pd\n"
             "import numpy as np\n"
-            "import plotly.express as px\n"
-            "import plotly.graph_objects as go\n"
-            "from plotly.subplots import make_subplots"
+            "import matplotlib.pyplot as plt\n"
+            "import seaborn as sns"
         )
     )
 
@@ -156,7 +161,7 @@ def export_notebook(store: WorkspaceStore) -> bytes:
             cells.append(nbf.v4.new_markdown_cell(plot.remark.strip()))
         cells.append(
             nbf.v4.new_code_cell(
-                plotly_code(
+                notebook_plot_code(
                     plot.plot_type,
                     var_by_session[plot.session_id],
                     plot.column,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, Controls, Handle, Position } from '@xyflow/react';
-import { Check, ChevronDown, GitBranch, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, GitBranch, Pencil, Plus, Trash2, X } from 'lucide-react';
 
 const NODE_Y_GAP = 98;
 const TIMELINE_X_GAP = 178;
@@ -422,8 +422,6 @@ function SessionStartNode({ data }) {
 const nodeTypes = { sessionNode: SessionNode, sessionStartNode: SessionStartNode };
 
 export default function SessionTree({ workspace, onActivate, onCreate, onRename, onDelete }) {
-  const [isTreeExpanded, setIsTreeExpanded] = useState(true);
-
   const { nodes, edges } = useMemo(() => {
     const { byId, childrenByParent } = buildSessionHierarchy(workspace.sessions);
     const timelineIndex = buildTimelineIndex(workspace.sessions);
@@ -524,24 +522,13 @@ export default function SessionTree({ workspace, onActivate, onCreate, onRename,
   }, [workspace, onActivate, onCreate, onRename, onDelete]);
 
   return (
-    <section className={`tree-panel ${isTreeExpanded ? '' : 'collapsed'}`} data-testid="session-tree-panel">
-      <button
-        type="button"
-        className="tree-panel-header tree-panel-toggle"
-        aria-expanded={isTreeExpanded}
-        aria-controls="session-tree-canvas"
-        onClick={() => setIsTreeExpanded((expanded) => !expanded)}
-      >
+    <section className="tree-panel" data-testid="session-tree-panel">
+      <div className="tree-panel-header">
         <div>
           <p className="section-label">Session tree</p>
         </div>
-        <span className="tree-panel-toggle-label">
-          {isTreeExpanded ? 'Hide' : 'Show'}
-          <ChevronDown className={`tree-panel-chevron ${isTreeExpanded ? 'open' : ''}`} size={16} aria-hidden="true" />
-        </span>
-      </button>
-      {isTreeExpanded && (
-        <div id="session-tree-canvas" className="tree-canvas" data-testid="session-tree-canvas">
+      </div>
+      <div id="session-tree-canvas" className="tree-canvas" data-testid="session-tree-canvas">
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -556,8 +543,7 @@ export default function SessionTree({ workspace, onActivate, onCreate, onRename,
             <Background gap={22} size={0.8} />
             <Controls showInteractive={false} />
           </ReactFlow>
-        </div>
-      )}
+      </div>
     </section>
   );
 }

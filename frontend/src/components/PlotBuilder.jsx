@@ -10,8 +10,6 @@ const numericPlotTypes = [
   ['scatter', 'Scatter relationship'],
   ['hexbin', 'Hexbin density'],
   ['line', 'Line relationship'],
-  ['correlation_heatmap', 'Correlation heatmap'],
-  ['missing_values', 'Missing values overview'],
   ['bar_top_n', 'Top-N bar'],
   ['pie_top_n', 'Top-N pie'],
   ['grouped_kde', 'KDE by category'],
@@ -21,16 +19,14 @@ const numericPlotTypes = [
 
 const categoricalPlotTypes = [
   ['bar_top_n', 'Top-N bar'],
-  ['pie_top_n', 'Top-N pie'],
-  ['correlation_heatmap', 'Correlation heatmap'],
-  ['missing_values', 'Missing values overview']
+  ['pie_top_n', 'Top-N pie']
 ];
 
 const groupedPlotTypes = new Set(['grouped_kde', 'grouped_box', 'grouped_violin']);
 const kdePlotTypes = new Set(['kde', 'grouped_kde']);
 const topNPlotTypes = new Set(['bar_top_n', 'pie_top_n']);
 const relationshipPlotTypes = new Set(['scatter', 'hexbin', 'line']);
-const noSubplotPlotTypes = new Set(['scatter', 'hexbin', 'line', 'correlation_heatmap', 'missing_values']);
+const noSubplotPlotTypes = new Set(['scatter', 'hexbin', 'line']);
 
 function defaultControls() {
   return {
@@ -52,9 +48,6 @@ function defaultControls() {
     gridsize: 30,
     sort_x: true,
     show_markers: true,
-    correlation_limit: 16,
-    show_values: true,
-    include_complete: false,
     orientation: 'vertical',
     sort_order: 'descending',
     show_grid: true,
@@ -330,21 +323,6 @@ export default function PlotBuilder({
           <label className="check"><input type="checkbox" checked={!!controls.show_markers} onChange={(e) => updateControl('show_markers', e.target.checked)} /> show markers</label>
         )}
 
-        {plotType === 'correlation_heatmap' && (
-          <label>
-            Max numeric columns
-            <input type="number" min="2" max="40" value={controls.correlation_limit} onChange={(e) => updateControl('correlation_limit', Number(e.target.value))} />
-          </label>
-        )}
-
-        {plotType === 'correlation_heatmap' && (
-          <label className="check"><input type="checkbox" checked={!!controls.show_values} onChange={(e) => updateControl('show_values', e.target.checked)} /> show values</label>
-        )}
-
-        {plotType === 'missing_values' && (
-          <label className="check"><input type="checkbox" checked={!!controls.include_complete} onChange={(e) => updateControl('include_complete', e.target.checked)} /> include complete columns</label>
-        )}
-
         {plotType === 'histogram' && (
           <label>
             Bins
@@ -448,9 +426,9 @@ export default function PlotBuilder({
           </label>
         )}
 
-        {(isTopNPlot || plotType === 'missing_values') && (
+        {isTopNPlot && (
           <label>
-            {plotType === 'missing_values' ? 'Max columns' : 'Top N'}
+            Top N
             <input
               type="number"
               min="1"

@@ -212,7 +212,14 @@ export default function App() {
         </nav>
 
         {activeView === 'overview' && (
-          <OverviewDashboard session={activeSession} onSelectColumn={exploreColumn} onOpenExplore={exploreColumn} />
+          <OverviewDashboard
+            session={activeSession}
+            onSelectColumn={exploreColumn}
+            onOpenExplore={exploreColumn}
+            onApply={(operation, params) => handleWorkspaceUpdate(api.applyOperation(activeSessionId, operation, params))}
+            onSaved={setWorkspace}
+            onError={(text) => setToast({ type: 'error', text })}
+          />
         )}
 
         {activeView === 'history' && (

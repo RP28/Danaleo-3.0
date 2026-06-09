@@ -1,4 +1,5 @@
-import { AlertTriangle, ArrowRight, BarChart3, Database, Grid3X3, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, Database, Grid3X3 } from 'lucide-react';
+import DatasetPlotBuilder from './DatasetPlotBuilder.jsx';
 
 function Metric({ icon, label, value, detail }) {
   return (
@@ -13,7 +14,7 @@ function Metric({ icon, label, value, detail }) {
   );
 }
 
-export default function OverviewDashboard({ session, onSelectColumn, onOpenExplore }) {
+export default function OverviewDashboard({ session, onSelectColumn, onOpenExplore, onApply, onSaved, onError }) {
   const profile = session.profile;
   const columns = session.columns;
   const interestingColumns = [...columns]
@@ -24,12 +25,9 @@ export default function OverviewDashboard({ session, onSelectColumn, onOpenExplo
     <div className="overview-dashboard">
       <section className="hero-panel">
         <div>
-          <p className="eyebrow"><Sparkles size={14} /> Start here</p>
-          <h2>Understand the shape before choosing a chart.</h2>
-          <p className="muted">
-            This overview surfaces data quality, column roles, relationships, and a raw preview.
-            Select any column to investigate it in detail.
-          </p>
+          <p className="eyebrow">Dataset profile</p>
+          <h2>{session.name}</h2>
+          <p className="muted">{profile.rows.toLocaleString()} observations across {profile.columns} variables.</p>
         </div>
         <button className="primary-btn" onClick={() => onOpenExplore(columns[0]?.name)}>
           Explore columns <ArrowRight size={16} />
@@ -40,15 +38,33 @@ export default function OverviewDashboard({ session, onSelectColumn, onOpenExplo
         <Metric icon={<Database size={18} />} label="Rows" value={profile.rows.toLocaleString()} detail={`${profile.columns} columns`} />
         <Metric icon={<BarChart3 size={18} />} label="Numeric" value={profile.numeric_columns} detail={`${profile.categorical_columns} categorical`} />
         <Metric icon={<AlertTriangle size={18} />} label="Missing" value={`${profile.missing_pct}%`} detail={`${profile.missing_cells.toLocaleString()} cells`} />
-        <Metric icon={<Grid3X3 size={18} />} label="Duplicates" value={profile.duplicate_rows.toLocaleString()} detail="exact duplicate rows" />
+        <article className="metric-card metric-action-card">
+          <span className="metric-icon"><Grid3X3 size={18} /></span>
+          <div>
+            <span>Duplicates</span>
+            <strong>{profile.duplicate_rows.toLocaleString()}</strong>
+            <small>exact duplicate rows</small>
+          </div>
+          <button
+            className="ghost-btn"
+            disabled={!profile.duplicate_rows}
+            onClick={() => {
+              if (window.confirm(`Drop ${profile.duplicate_rows.toLocaleString()} exact duplicate row(s) from the active session?`)) {
+                onApply('drop_duplicates', {});
+              }
+            }}
+          >
+            Drop duplicates
+          </button>
+        </article>
       </section>
 
       <section className="insight-grid">
         <article className="insight-panel">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Quality scan</p>
-              <h3>Columns needing attention</h3>
+              <p className="eyebrow">Missingness analysis</p>
+              <h3>Variables with missing values</h3>
             </div>
             <span className="overview-pill">{profile.high_missing.length} flagged</span>
           </div>
@@ -63,8 +79,8 @@ export default function OverviewDashboard({ session, onSelectColumn, onOpenExplo
         <article className="insight-panel">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Relationships</p>
-              <h3>Strongest correlations</h3>
+              <p className="eyebrow">Numeric associations</p>
+              <h3>Highest absolute Pearson correlations</h3>
             </div>
             <span className="overview-pill">{profile.top_correlations.length} pairs</span>
           </div>
@@ -73,14 +89,14 @@ export default function OverviewDashboard({ session, onSelectColumn, onOpenExplo
               <span>{item.left} ↔ {item.right}</span>
               <strong>{item.value}</strong>
             </button>
-          )) : <p className="empty-note">Add at least two numeric columns to compare relationships.</p>}
+          )) : <p className="empty-note">Pearson correlation requires at least two numeric variables.</p>}
         </article>
 
         <article className="insight-panel">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Suggested next</p>
-              <h3>Interesting columns</h3>
+              <p className="eyebrow">Column diagnostics</p>
+              <h3>Highest missingness or cardinality</h3>
             </div>
           </div>
           {interestingColumns.map((column) => (
@@ -92,10 +108,17 @@ export default function OverviewDashboard({ session, onSelectColumn, onOpenExplo
         </article>
       </section>
 
+      <DatasetPlotBuilder
+        sessionId={session.id}
+        anchorColumn={columns[0]?.name}
+        onSaved={onSaved}
+        onError={onError}
+      />
+
       <section className="data-preview-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Raw check</p>
+            <p className="eyebrow">Data preview</p>
             <h3>First {profile.preview.length} rows</h3>
           </div>
           <span className="overview-pill">showing up to 12 columns</span>

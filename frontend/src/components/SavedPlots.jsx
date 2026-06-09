@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { Trash2 } from 'lucide-react';
 
 export default function SavedPlots({ plots, activeFigure, onSelectFigure, onWorkspaceUpdate, onError }) {
+  const globalPlotTypes = new Set(['correlation_heatmap', 'missing_values']);
   async function toggle(plot) {
     try {
       const data = await api.updatePlot(plot.id, { include_in_export: !plot.include_in_export });
@@ -34,7 +35,7 @@ export default function SavedPlots({ plots, activeFigure, onSelectFigure, onWork
           <article className="saved-card" key={plot.id}>
             <div>
               <strong>{plot.title}</strong>
-              <small>{plot.session_name} · {plot.column} · {plot.plot_type}</small>
+              <small>{plot.session_name} · {globalPlotTypes.has(plot.plot_type) ? 'full dataset' : plot.column} · {plot.plot_type}</small>
             </div>
             {plot.remark && <p>{plot.remark}</p>}
             <div className="row compact">

@@ -64,6 +64,9 @@ def apply_operation(df: pd.DataFrame, operation_type: str, params: dict[str, Any
             raise ValueError("Dropping missing values would remove all rows")
         return result
 
+    if operation_type == "drop_duplicates":
+        return df.drop_duplicates().copy()
+
     raise ValueError(f"Unsupported operation: {operation_type}")
 
 
@@ -76,4 +79,6 @@ def operation_label(operation_type: str, params: dict[str, Any]) -> str:
         return f"Replace in {params.get('column', '')}"
     if operation_type == "drop_missing":
         return f"Drop missing: {params.get('column', '')}"
+    if operation_type == "drop_duplicates":
+        return "Drop duplicate rows"
     return operation_type.replace("_", " ").title()

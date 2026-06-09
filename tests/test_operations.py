@@ -122,6 +122,15 @@ def test_replace_values_supports_boolean_values():
     assert replaced["flag"].tolist() == [False, False, False, False]
 
 
+def test_drop_duplicates_removes_exact_duplicate_rows():
+    df = pd.DataFrame({"x": [1, 1, 2], "group": ["A", "A", "B"]})
+
+    result = apply_operation(df, "drop_duplicates", {})
+
+    assert result.to_dict(orient="records") == [{"x": 1, "group": "A"}, {"x": 2, "group": "B"}]
+    assert len(df) == 3
+
+
 def test_unsupported_operation_type_is_rejected():
     with pytest.raises(ValueError, match="Unsupported operation"):
         apply_operation(sample_df(), "explode_everything", {})
@@ -132,4 +141,5 @@ def test_operation_labels_are_human_readable():
     assert operation_label("drop_column", {"column": "x"}) == "Drop column: x"
     assert operation_label("replace_values", {"column": "x"}) == "Replace in x"
     assert operation_label("drop_missing", {"column": "x"}) == "Drop missing: x"
+    assert operation_label("drop_duplicates", {}) == "Drop duplicate rows"
     assert operation_label("unknown_op", {}) == "Unknown Op"

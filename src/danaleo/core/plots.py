@@ -627,6 +627,167 @@ def build_figure(
     return figure
 
 
+def _notebook_plot_lines(
+    plot_type: str,
+    column_expr: str,
+    controls: dict[str, Any],
+    indent: str = "",
+) -> list[str]:
+    ax = "_ax"
+    df = "_plot_df"
+    group_by = str(controls.get("group_by") or "")
+    compare_with = str(controls.get("compare_with") or "")
+    lines: list[str] = []
+
+    if plot_type == "histogram":
+        lines.append(
+            f"sns.histplot(data={df}, x={column_expr}, bins={_as_int(controls.get('bins'), 30, 2, 200)}, "
+            f"kde={_as_bool(controls.get('show_kde'), False)!r}, ax={ax})"
+        )
+    elif plot_type == "kde":
+        lines.append(
+            f"sns.kdeplot(data={df}, x={column_expr}, bw_adjust={_as_float(controls.get('bw_adjust'), 1.0, 0.05, 10)!r}, "
+            f"fill={_as_bool(controls.get('fill'), True)!r}, ax={ax})"
+        )
+    elif plot_type == "box":
+        lines.append(
+            f"sns.boxplot(data={df}, y={column_expr}, showfliers={_as_bool(controls.get('show_outliers'), True)!r}, ax={ax})"
+        )
+    elif plot_type == "violin":
+        lines.append(f"sns.violinplot(data={df}, y={column_expr}, inner='quartile', ax={ax})")
+    elif plot_type in {"bar_top_n", "pie_top_n"}:
+        lines.extend(
+            [
+                f"_counts = ({df}[{column_expr}].astype('string').fillna('<missing>').replace('', '<empty>')",
+                f"           .value_counts().head({_as_int(controls.get('top_n'), 15, 1, 100)}).rename_axis('value').reset_index(name='count'))",
+            ]
+        )
+        sort_order = str(controls.get("sort_order") or "descending")
+        if sort_order in {"ascending", "descending"}:
+            lines.append(f"_counts = _counts.sort_values('count', ascending={sort_order == 'ascending'!r})")
+        if plot_type == "pie_top_n":
+            lines.append(f"{ax}.pie(_counts['count'], labels=_counts['value'], autopct='%1.1f%%', startangle=90)")
+            lines.append(f"{ax}.axis('equal')")
+        elif str(controls.get("orientation") or "vertical") == "horizontal":
+            lines.append(f"sns.barplot(data=_counts, x='count', y='value', ax={ax})")
+        else:
+            lines.append(f"sns.barplot(data=_counts, x='value', y='count', ax={ax})")
+            lines.append(f"{ax}.tick_params(axis='x', labelrotation=35)")
+    elif plot_type == "grouped_kde":
+        lines.append(
+            f"sns.kdeplot(data={df}, x={column_expr}, hue={group_by!r}, "
+            f"bw_adjust={_as_float(controls.get('bw_adjust'), 1.0, 0.05, 10)!r}, "
+            f"fill={_as_bool(controls.get('fill'), True)!r}, common_norm=False, ax={ax})"
+        )
+    elif plot_type in {"grouped_box", "grouped_violin"}:
+        lines.append(
+            f"_groups = {df}[{group_by!r}].astype('string').fillna('<missing>').value_counts()"
+            f".head({_as_int(controls.get('group_limit'), 8, 1, 30)}).index"
+        )
+        lines.append(f"_grouped = {df}[{df}[{group_by!r}].astype('string').fillna('<missing>').isin(_groups)]")
+        if plot_type == "grouped_box":
+            lines.append(
+                f"sns.boxplot(data=_grouped, x={group_by!r}, y={column_expr}, order=_groups, "
+                f"showfliers={_as_bool(controls.get('show_outliers'), True)!r}, ax={ax})"
+            )
+        else:
+            lines.append(f"sns.violinplot(data=_grouped, x={group_by!r}, y={column_expr}, order=_groups, inner='quartile', ax={ax})")
+        lines.append(f"{ax}.tick_params(axis='x', labelrotation=35)")
+    elif plot_type == "scatter":
+        hue = f", hue={group_by!r}" if group_by else ""
+        lines.append(
+            f"sns.scatterplot(data={df}, x={column_expr}, y={compare_with!r}{hue}, "
+            f"s={_as_float(controls.get('marker_size'), 28, 4, 300)!r}, "
+            f"alpha={_as_float(controls.get('alpha'), 0.72, 0.05, 1)!r}, ax={ax})"
+        )
+    elif plot_type == "hexbin":
+        lines.append(f"_paired = {df}[[{column_expr}, {compare_with!r}]].apply(pd.to_numeric, errors='coerce').dropna()")
+        lines.append(
+            f"_hexbin = {ax}.hexbin(_paired[{column_expr}], _paired[{compare_with!r}], "
+            f"gridsize={_as_int(controls.get('gridsize'), 30, 8, 100)}, mincnt=1, cmap='viridis')"
+        )
+        lines.append(f"_fig.colorbar(_hexbin, ax={ax}, label='Count')")
+    elif plot_type == "line":
+        lines.append(f"_line_data = {df}[[{column_expr}, {compare_with!r}]].apply(pd.to_numeric, errors='coerce').dropna()")
+        if _as_bool(controls.get("sort_x"), True):
+            lines.append(f"_line_data = _line_data.sort_values({column_expr})")
+        marker = "'o'" if _as_bool(controls.get("show_markers"), True) else "None"
+        lines.append(
+            f"sns.lineplot(data=_line_data, x={column_expr}, y={compare_with!r}, marker={marker}, "
+            f"alpha={_as_float(controls.get('alpha'), 0.8, 0.05, 1)!r}, ax={ax})"
+        )
+    elif plot_type == "correlation_heatmap":
+        lines.append(
+            f"_corr = {df}.select_dtypes(include='number').iloc[:, :{_as_int(controls.get('correlation_limit'), 16, 2, 40)}].corr()"
+        )
+        lines.append(
+            f"sns.heatmap(_corr, vmin=-1, vmax=1, cmap='coolwarm', "
+            f"annot={_as_bool(controls.get('show_values'), True)!r}, fmt='.2f', ax={ax})"
+        )
+    elif plot_type == "missing_values":
+        lines.append(f"_missing = ({df}.isna().mean() * 100).sort_values()")
+        if not _as_bool(controls.get("include_complete"), False):
+            lines.append("_missing = _missing[_missing > 0]")
+        lines.append("_missing = pd.Series({'No missing values': 0.0}) if _missing.empty else _missing")
+        lines.append(f"_missing = _missing.tail({_as_int(controls.get('top_n'), 20, 1, 100)})")
+        lines.append(f"sns.barplot(x=_missing.values, y=_missing.index, orient='h', ax={ax})")
+        lines.append(f"{ax}.set_xlim(0, 100)")
+        lines.append(f"{ax}.set_xlabel('Missing (%)')")
+    else:
+        raise ValueError(f"Unsupported plot type: {plot_type}")
+
+    if _as_bool(controls.get("show_grid"), True) and plot_type != "correlation_heatmap":
+        lines.append(f"{ax}.grid(True, alpha=0.18, linestyle='--')")
+    if _as_bool(controls.get("log_x"), False):
+        lines.append(f"{ax}.set_xscale('log')")
+    if _as_bool(controls.get("log_y"), False):
+        lines.append(f"{ax}.set_yscale('log')")
+    if str(controls.get("chart_title") or "").strip():
+        lines.append(f"{ax}.set_title({str(controls['chart_title']).strip()!r})")
+
+    return [indent + line for line in lines]
+
+
+def notebook_plot_code(
+    plot_type: str,
+    df_var: str,
+    column: str,
+    local_query: str = "",
+    controls: dict[str, Any] | None = None,
+) -> str:
+    """Return concise, package-independent seaborn/matplotlib code for one plot."""
+    controls = controls or {}
+    query = str(local_query or "").strip()
+    lines = [f"_plot_df = {df_var}.query({query!r}).copy()" if query else f"_plot_df = {df_var}.copy()"]
+
+    if _as_bool(controls.get("subplot_enabled"), False):
+        columns = _subplot_columns(column, controls)
+        cols_per_row = _as_int(controls.get("subplot_cols"), 2, 1, 4)
+        rows = math.ceil(len(columns) / cols_per_row)
+        lines.extend(
+            [
+                f"_columns = {columns!r}",
+                f"_fig, _axes = plt.subplots({rows}, {cols_per_row}, figsize=({5.8 * cols_per_row!r}, {4.2 * rows!r}), squeeze=False)",
+                "for _ax, _column in zip(_axes.ravel(), _columns):",
+            ]
+        )
+        lines.extend(_notebook_plot_lines(plot_type, "_column", controls, indent="    "))
+        lines.extend(
+            [
+                "for _ax in _axes.ravel()[len(_columns):]:",
+                "    _ax.axis('off')",
+                "_fig.tight_layout()",
+                "plt.show()",
+            ]
+        )
+    else:
+        lines.append("_fig, _ax = plt.subplots(figsize=(9.6, 5.8))")
+        lines.extend(_notebook_plot_lines(plot_type, repr(column), controls))
+        lines.extend(["_fig.tight_layout()", "plt.show()"])
+
+    return "\n".join(lines)
+
+
 def plotly_code(
     plot_type: str,
     df_var: str,
@@ -634,24 +795,5 @@ def plotly_code(
     local_query: str = "",
     controls: dict[str, Any] | None = None,
 ) -> str:
-    """
-    Notebook-export helper.
-
-    The app preview uses matplotlib-rendered PNGs. Exported notebooks call the same
-    build_figure function so every UI option, including numeric Top-N and subplots,
-    is recreated consistently.
-    """
-    return (
-        "from base64 import b64decode\n"
-        "from IPython.display import Image, display\n"
-        "from danaleo.core.plots import build_figure\n\n"
-        f"_danaleo_plot = build_figure(\n"
-        f"    {df_var},\n"
-        f"    column={column!r},\n"
-        f"    plot_type={plot_type!r},\n"
-        f"    local_query={local_query!r},\n"
-        f"    controls={controls or {}!r},\n"
-        f")\n"
-        "_danaleo_png = _danaleo_plot['image'].split(',', 1)[1]\n"
-        "display(Image(data=b64decode(_danaleo_png)))"
-    )
+    """Backward-compatible alias for the package-independent notebook code generator."""
+    return notebook_plot_code(plot_type, df_var, column, local_query, controls)

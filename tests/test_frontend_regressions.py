@@ -127,8 +127,6 @@ def test_plot_builder_exposes_current_plot_modes_and_controls():
         "scatter",
         "hexbin",
         "line",
-        "correlation_heatmap",
-        "missing_values",
     ]:
         assert plot_type in source
 
@@ -169,10 +167,21 @@ def test_workspace_is_overview_first_and_keeps_sessions_in_dedicated_view():
     assert "Overview" in app
     assert "Explore & plot" in app
     assert "Sessions" in app
-    assert "Strongest correlations" in overview
-    assert "Columns needing attention" in overview
+    assert "Highest absolute Pearson correlations" in overview
+    assert "Variables with missing values" in overview
     assert "First {profile.preview.length} rows" in overview
+    assert "drop_duplicates" in overview
     assert "Find a column" in sidebar
+
+
+def test_dataset_level_plots_are_not_in_column_plot_builder():
+    builder = read_frontend("components/PlotBuilder.jsx")
+    dataset_builder = read_frontend("components/DatasetPlotBuilder.jsx")
+
+    assert "correlation_heatmap" not in builder
+    assert "missing_values" not in builder
+    assert "correlation_heatmap" in dataset_builder
+    assert "missing_values" in dataset_builder
 
 
 def test_plot_builder_keeps_plot_filter_local_and_sends_export_metadata():
@@ -195,6 +204,14 @@ def test_saved_plots_can_toggle_export_state():
     assert "onWorkspaceUpdate(data)" in source
     assert "In export" in source
     assert "Skip export" in source
+
+
+def test_toasts_auto_dismiss_after_five_seconds():
+    source = read_frontend("components/Toast.jsx")
+
+    assert "useEffect" in source
+    assert "window.setTimeout(onClose, 5000)" in source
+    assert "window.clearTimeout(timer)" in source
 
 
 def test_upload_zone_limits_to_csv_and_exposes_sampling_inputs():
@@ -230,14 +247,10 @@ def test_column_delete_is_in_sidebar_column_section():
     assert ".column-delete-btn" in styles
 
 
-def test_session_tree_panel_is_collapsible_dropdown():
+def test_session_tree_panel_is_always_visible_inside_sessions_tab():
     source = read_frontend("components/SessionTree.jsx")
-    styles = read_frontend("styles.css")
 
-    assert "const [isTreeExpanded, setIsTreeExpanded] = useState(true);" in source
-    assert "aria-expanded={isTreeExpanded}" in source
-    assert 'aria-controls="session-tree-canvas"' in source
-    assert "tree-panel-toggle" in source
-    assert "{isTreeExpanded && (" in source
-    assert ".tree-panel.collapsed" in styles
-    assert ".tree-panel-toggle-label" in styles
+    assert "isTreeExpanded" not in source
+    assert "tree-panel-toggle" not in source
+    assert "Hide" not in source
+    assert 'id="session-tree-canvas"' in source

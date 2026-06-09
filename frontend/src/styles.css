@@ -916,49 +916,6 @@ textarea {
   margin: 8px 0 0;
 }
 
-/* Collapsible session tree ------------------------------------------------
-   Keep the graph available when needed, but let users reclaim workspace height
-   by closing the whole tree panel. */
-.tree-panel-toggle {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.tree-panel-toggle:hover .section-label {
-  color: var(--accent);
-}
-
-.tree-panel-toggle-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.tree-panel-chevron {
-  transition: transform 140ms ease;
-}
-
-.tree-panel-chevron.open {
-  transform: rotate(180deg);
-}
-
-.tree-panel.collapsed {
-  height: auto;
-  min-height: 0;
-}
-
-.tree-panel.collapsed .tree-panel-header {
-  border-bottom: 0;
-  padding-bottom: 8px;
-}
-
 .column-check-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
@@ -1052,6 +1009,9 @@ textarea {
 .hero-panel p:last-child { max-width: 720px; margin-bottom: 0; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .metric-card { display: flex; align-items: center; gap: 12px; padding: 14px; }
+.metric-action-card { flex-wrap: wrap; }
+.metric-action-card > div { flex: 1; min-width: 90px; }
+.metric-action-card .ghost-btn { margin-left: auto; }
 .metric-icon {
   display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 auto;
   border-radius: 11px; background: var(--primarySoft); color: var(--accent);
@@ -1088,6 +1048,14 @@ textarea {
 .column-search input { border: 0; padding-left: 0; background: transparent; }
 .kind-filter { display: flex; gap: 3px; overflow-x: auto; }
 .kind-filter button { padding: 5px 7px; white-space: nowrap; }
+.dataset-plot-panel {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--borderSoft);
+  border-radius: 16px;
+  background: rgba(16, 19, 28, 0.86);
+  box-shadow: var(--shadow);
+}
 @media (max-width: 1100px) {
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .insight-grid { grid-template-columns: 1fr; }

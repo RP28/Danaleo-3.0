@@ -16,6 +16,7 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload a C
 * Filter rows using pandas-style queries
 * Drop columns
 * Drop missing values
+* Drop exact duplicate rows
 * Replace values, including multiple replacements
 * Plot numeric and categorical columns
 * Top-N plots for categorical and numeric columns
@@ -26,6 +27,7 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload a C
 * Save plots with export notes
 * Include or skip saved plots during notebook export
 * Export EDA workflow to `.ipynb`
+* Exported notebooks use concise pandas, NumPy, Matplotlib, and Seaborn code without requiring Danaleo
 * Local browser-based UI
 
 ## Requirements
