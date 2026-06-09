@@ -27,11 +27,11 @@ def test_api_returns_400_before_upload_for_workspace_actions():
 
     create = client.post("/api/sessions", json={"name": "Branch", "parent_id": "missing"})
     assert create.status_code == 400
-    assert "Upload a CSV file first" in create.json()["detail"]
+    assert "Upload a data file first" in create.json()["detail"]
 
     activate = client.post("/api/sessions/activate", json={"session_id": "missing"})
     assert activate.status_code == 400
-    assert "Upload a CSV file first" in activate.json()["detail"]
+    assert "Upload a data file first" in activate.json()["detail"]
 
     export_response = client.get("/api/export/notebook")
     assert export_response.status_code == 400
@@ -39,19 +39,19 @@ def test_api_returns_400_before_upload_for_workspace_actions():
 
     progress_response = client.get("/api/progress/download")
     assert progress_response.status_code == 400
-    assert "Upload a CSV" in progress_response.json()["detail"]
+    assert "Upload a data file" in progress_response.json()["detail"]
 
 
-def test_upload_rejects_non_csv_file(csv_bytes: bytes):
+def test_upload_rejects_unsupported_file(csv_bytes: bytes):
     client = TestClient(app)
 
     response = client.post(
         "/api/upload",
-        files={"file": ("customers.txt", csv_bytes, "text/plain")},
+        files={"file": ("customers.exe", csv_bytes, "application/octet-stream")},
     )
 
     assert response.status_code == 400
-    assert "CSV" in response.json()["detail"]
+    assert "supported tabular data file" in response.json()["detail"]
 
 
 def test_upload_rejects_malformed_csv_and_accepts_uppercase_extension():
@@ -92,6 +92,23 @@ def test_upload_auto_detects_non_comma_csv_content():
         "encoding": "cp1252",
         "skiprows": 1,
     }
+
+
+def test_upload_accepts_mixed_supported_data_formats():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/upload",
+        files=[
+            ("file", ("records.json", b'[{"id":1,"name":"Alice"}]', "application/json")),
+            ("file", ("values.tsv", b"id\tvalue\n1\t10\n", "text/tab-separated-values")),
+        ],
+    )
+
+    assert response.status_code == 200
+    workspace = response.json()
+    assert [dataset["source_format"] for dataset in workspace["datasets"]] == ["json", "delimited"]
+    assert workspace["active_session"]["overview"]["columns"] == 2
 
 
 def test_upload_with_sampling_modes(csv_bytes: bytes):

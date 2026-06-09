@@ -13,6 +13,7 @@ import pandas as pd
 from danaleo.core.operations import parse_scalar
 from danaleo.core.plots import notebook_plot_code
 from danaleo.core.session_store import WorkspaceStore
+from danaleo.core.data_ingestion import notebook_read_expression
 
 
 def _python_literal(value: Any) -> str:
@@ -146,16 +147,16 @@ def _merge_chain_available(store: WorkspaceStore, dataset, visiting: set[str] | 
 
 
 def _load_dataset_code(dataset, df_var: str) -> list[str]:
-    parse_info = dataset.parse_info or {}
-    read_options: list[str] = []
-    if parse_info.get("delimiter", ",") != ",":
-        read_options.append(f"sep={parse_info['delimiter']!r}")
-    if parse_info.get("encoding", "utf-8") != "utf-8":
-        read_options.append(f"encoding={parse_info['encoding']!r}")
-    if parse_info.get("skiprows"):
-        read_options.append(f"skiprows={parse_info['skiprows']!r}")
-    read_args = ", " + ", ".join(read_options) if read_options else ""
-    code = [f"{df_var} = pd.read_csv({dataset.csv_name!r}{read_args})"]
+    code = [
+        notebook_read_expression(
+            df_var,
+            dataset.csv_name,
+            dataset.source_format,
+            dataset.parse_info,
+        )
+    ]
+    if dataset.parse_info and dataset.parse_info.get("column_names"):
+        code[0] += f"\n{df_var}.columns = {dataset.parse_info['column_names']!r}"
     info = dataset.sample_info
     if info and info.get("mode") == "n":
         code.append(

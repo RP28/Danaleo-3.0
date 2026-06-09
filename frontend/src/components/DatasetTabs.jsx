@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { api } from '../api.js';
 import MergeDatasetsModal from './MergeDatasetsModal.jsx';
 
+const DATA_FILE_ACCEPT = '.csv,.tsv,.tab,.txt,.json,.jsonl,.ndjson,.xlsx,.xls,.xlsm,.xlsb,.ods,.parquet,.pq,.feather,.arrow,.orc,.dta,.sas7bdat,.xpt,.h5,.hdf,.hdf5,.gz,.bz2,.xz,.zip';
+
 export default function DatasetTabs({ workspace, onWorkspace, onError }) {
   const [showMerge, setShowMerge] = useState(false);
   async function uploadFiles(event) {
@@ -38,7 +40,7 @@ export default function DatasetTabs({ workspace, onWorkspace, onError }) {
   }
 
   return (
-    <nav className="dataset-tabs" aria-label="CSV datasets">
+    <nav className="dataset-tabs" aria-label="Data files">
       <div className="dataset-tab-scroll">
         {workspace.datasets.map((dataset) => (
           <div
@@ -47,7 +49,7 @@ export default function DatasetTabs({ workspace, onWorkspace, onError }) {
           >
             <button type="button" className="dataset-tab-main" onClick={() => activate(dataset.id)}>
               <strong>{dataset.csv_name}</strong>
-              <small>{dataset.provenance?.type === 'merge' ? 'merge result · ' : ''}{dataset.rows.toLocaleString()} rows · {dataset.columns} cols</small>
+              <small>{dataset.provenance?.type === 'merge' ? 'merge result · ' : `${dataset.source_format} · `}{dataset.rows.toLocaleString()} rows · {dataset.columns} cols</small>
             </button>
             <button
               type="button"
@@ -66,8 +68,8 @@ export default function DatasetTabs({ workspace, onWorkspace, onError }) {
         </button>
       )}
       <label className="ghost-btn dataset-add">
-        <FilePlus2 size={15} /> Add CSVs
-        <input type="file" accept=".csv,text/csv" multiple onChange={uploadFiles} />
+        <FilePlus2 size={15} /> Add data
+        <input type="file" accept={DATA_FILE_ACCEPT} multiple onChange={uploadFiles} />
       </label>
       {showMerge && (
         <MergeDatasetsModal

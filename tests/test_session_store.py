@@ -95,7 +95,7 @@ def test_load_csv_preserves_valid_quoted_single_column_files():
 
 
 def test_load_csv_rejects_malformed_non_comma_files_instead_of_loading_one_column():
-    with pytest.raises(ValueError, match="Could not parse CSV"):
+    with pytest.raises(ValueError, match="Could not parse delimited data file"):
         WorkspaceStore().load_csv(b'name;notes\nAlice;"unterminated\n', "broken.csv")
 
 
@@ -177,7 +177,7 @@ def test_sampling_is_ignored_when_it_would_not_reduce_rows(csv_bytes: bytes):
 def test_require_session_validates_upload_and_session_id():
     workspace_store = WorkspaceStore()
 
-    with pytest.raises(ValueError, match="Upload a CSV file first"):
+    with pytest.raises(ValueError, match="Upload a data file first"):
         workspace_store.require_session("missing")
 
     workspace_store.load_csv(b"age\n1\n2\n", "small.csv")
@@ -705,11 +705,11 @@ def test_update_plot_changes_only_supplied_fields_and_default_title(loaded_store
 
 
 def test_project_export_requires_ready_store_and_existing_source(loaded_store: WorkspaceStore):
-    with pytest.raises(ValueError, match="Upload a CSV"):
+    with pytest.raises(ValueError, match="Upload a data file"):
         WorkspaceStore().export_project()
 
     Path(loaded_store.csv_path).unlink()
-    with pytest.raises(ValueError, match="Source CSV"):
+    with pytest.raises(ValueError, match="Source data file"):
         loaded_store.export_project()
 
 

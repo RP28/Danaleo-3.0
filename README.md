@@ -1,13 +1,13 @@
 # Danaleo 3.0
 
-Danaleo is a local interactive EDA workspace for CSV files.
+Danaleo is a local interactive EDA workspace for tabular data files.
 
-It runs a Python FastAPI backend and a React UI on localhost. You can upload multiple CSVs into separate dataset tabs, inspect columns, create dataframe sessions, apply operations, build plots, save plots with notes, view session history as a tree, and export the active analysis as a Jupyter notebook.
+It runs a Python FastAPI backend and a React UI on localhost. You can upload multiple data files into separate dataset tabs, inspect columns, create dataframe sessions, apply operations, build plots, save plots with notes, view session history as a tree, and export the active analysis as a Jupyter notebook.
 
 ## Features
 
-* Upload multiple CSV files into independent dataset tabs
-* Save and restore every open CSV, session, and plot in one `.danaleo` workspace
+* Upload multiple tabular data files into independent dataset tabs
+* Save and restore every open data file, session, and plot in one `.danaleo` workspace
 * Visually merge two dataset session snapshots with inner, left, right, full outer, or cross joins
 * Preview merge match diagnostics and validate one-to-one, one-to-many, or many-to-one relationships
 * Optional sampling during upload
@@ -19,6 +19,8 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload mul
 * Filter rows using pandas-style queries
 * Drop columns
 * Automatically detect common CSV separators and text encodings
+* Read JSON/JSON Lines, Excel/OpenDocument, Parquet, Feather, ORC, Stata, SAS, and HDF files
+* Open compressed delimited-text and JSON files (`.gz`, `.bz2`, `.xz`, and single-file `.zip`)
 * Drop missing values
 * Drop exact duplicate rows
 * Replace values, including multiple replacements
@@ -270,7 +272,7 @@ Use the export option in the UI to download a Jupyter notebook.
 
 The exported notebook attempts to recreate the EDA workflow, including:
 
-* CSV loading
+* Tabular data-file loading
 * Sampling
 * Session creation
 * Session operations

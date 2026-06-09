@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from danaleo.core.exporter import export_notebooks_payload
+from danaleo.core.data_ingestion import is_supported_data_filename
 from danaleo.core.session_store import store
 from danaleo.core.stats import column_stats
 from danaleo.server.models import (
@@ -76,7 +77,7 @@ def reset_workspace() -> dict:
 
 
 @app.post("/api/upload")
-async def upload_csv(
+async def upload_data(
     file: list[UploadFile] = File(...),
     sample_mode: str = Form("none"),
     sample_n: int | None = Form(None),
@@ -86,11 +87,11 @@ async def upload_csv(
     try:
         uploads: list[tuple[bytes, str]] = []
         for uploaded in file:
-            if not uploaded.filename or not uploaded.filename.lower().endswith(".csv"):
-                raise ValueError("Please upload CSV files only")
+            if not is_supported_data_filename(uploaded.filename):
+                raise ValueError("Please upload a supported tabular data file")
             content = await uploaded.read()
             uploads.append((content, uploaded.filename))
-        return store.load_csv_batch(
+        return store.load_data_batch(
             uploads,
             sample_mode,
             sample_n,

@@ -16,7 +16,7 @@ export default function Sidebar({ workspace, selectedColumn, onSelectColumn, onD
         <div className="logo-dot" />
         <div>
           <strong>Danaleo</strong>
-          <small>CSV workspace</small>
+          <small>Data workspace</small>
         </div>
       </div>
 

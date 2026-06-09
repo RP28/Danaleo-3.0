@@ -3,6 +3,8 @@ import { Upload, Database, FileUp } from 'lucide-react';
 import { api } from '../api.js';
 import Toast from './Toast.jsx';
 
+const DATA_FILE_ACCEPT = '.csv,.tsv,.tab,.txt,.json,.jsonl,.ndjson,.xlsx,.xls,.xlsm,.xlsb,.ods,.parquet,.pq,.feather,.arrow,.orc,.dta,.sas7bdat,.xpt,.h5,.hdf,.hdf5,.gz,.bz2,.xz,.zip';
+
 export default function UploadZone({ onUploaded, onError, toast, setToast }) {
   const [files, setFiles] = useState([]);
   const [sampleMode, setSampleMode] = useState('none');
@@ -14,7 +16,7 @@ export default function UploadZone({ onUploaded, onError, toast, setToast }) {
 
   async function submit(event) {
     event.preventDefault();
-    if (!files.length) return onError('Choose at least one CSV file first');
+    if (!files.length) return onError('Choose at least one data file first');
     const form = new FormData();
     files.forEach((file) => form.append('file', file));
     form.append('sample_mode', sampleMode);
@@ -53,12 +55,12 @@ export default function UploadZone({ onUploaded, onError, toast, setToast }) {
         <div className="brand-mark"><Database size={28}/></div>
         <p className="eyebrow">Danaleo 3.0</p>
         <h1>Interactive EDA workspace</h1>
-        <p className="muted wide">Upload one or more CSV files. Each dataset opens in its own workspace tab.</p>
+        <p className="muted wide">Upload CSV, JSON, spreadsheet, Parquet, and other tabular data files. Each dataset opens in its own workspace tab.</p>
         <form onSubmit={submit} className="upload-form">
           <label className="dropzone">
             <Upload size={30}/>
-            <span>{files.length ? `${files.length} CSV file(s) selected` : 'Click to choose CSV files'}</span>
-            <input type="file" accept=".csv,text/csv" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))}/>
+            <span>{files.length ? `${files.length} data file(s) selected` : 'Click to choose data files'}</span>
+            <input type="file" accept={DATA_FILE_ACCEPT} multiple onChange={(e) => setFiles(Array.from(e.target.files || []))}/>
           </label>
 
           <details className="soft-details">

@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: danaleo
 Version: 3.0.0
-Summary: Localhost interactive EDA workspace for CSV files
+Summary: Localhost interactive EDA workspace for tabular data files
 Author: Danaleo
 License: MIT
 Requires-Python: >=3.10
@@ -16,6 +16,12 @@ Requires-Dist: matplotlib>=3.8
 Requires-Dist: seaborn>=0.13
 Requires-Dist: nbformat>=5.10
 Requires-Dist: pydantic>=2.7
+Requires-Dist: openpyxl>=3.1
+Requires-Dist: xlrd>=2.0
+Requires-Dist: odfpy>=1.4
+Requires-Dist: pyxlsb>=1.0
+Requires-Dist: pyarrow>=16.0
+Requires-Dist: tables>=3.9
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
 Requires-Dist: httpx>=0.27; extra == "dev"
@@ -23,13 +29,16 @@ Requires-Dist: ruff>=0.6; extra == "dev"
 
 # Danaleo 3.0
 
-Danaleo is a local interactive EDA workspace for CSV files.
+Danaleo is a local interactive EDA workspace for tabular data files.
 
-It runs a Python FastAPI backend and a React UI on localhost. You can upload a CSV, inspect columns, create dataframe sessions, apply operations, build plots, save plots with notes, view session history as a tree, and export the analysis as a Jupyter notebook.
+It runs a Python FastAPI backend and a React UI on localhost. You can upload multiple data files into separate dataset tabs, inspect columns, create dataframe sessions, apply operations, build plots, save plots with notes, view session history as a tree, and export the active analysis as a Jupyter notebook.
 
 ## Features
 
-* Upload CSV files
+* Upload multiple tabular data files into independent dataset tabs
+* Save and restore every open data file, session, and plot in one `.danaleo` workspace
+* Visually merge two dataset session snapshots with inner, left, right, full outer, or cross joins
+* Preview merge match diagnostics and validate one-to-one, one-to-many, or many-to-one relationships
 * Optional sampling during upload
 * Column overview and column-level statistics
 * Overview-first dataset profile with quality flags, correlations, and row preview
@@ -38,6 +47,8 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload a C
 * Rename, activate, and delete sessions
 * Filter rows using pandas-style queries
 * Drop columns
+* Automatically detect common CSV separators and text encodings
+* Read JSON/JSON Lines, Excel/OpenDocument, Parquet, Feather, ORC, Stata, SAS, and HDF files
 * Drop missing values
 * Drop exact duplicate rows
 * Replace values, including multiple replacements
@@ -48,9 +59,10 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload a C
 * Scatter, hexbin, line relationship, correlation heatmap, and missing-values plots
 * Shared chart title, grid, log-axis, sorting, orientation, marker, and opacity controls
 * Save plots with export notes
-* Include or skip saved plots during notebook export
+* Include or skip saved plots across every dataset tab during notebook export
 * Export EDA workflow to `.ipynb`
 * Exported notebooks use concise pandas, NumPy, Matplotlib, and Seaborn code without requiring Danaleo
+* Exported merged datasets recreate available join chains with direct `pd.merge(...)` code
 * Local browser-based UI
 
 ## Requirements

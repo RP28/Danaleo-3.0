@@ -280,10 +280,15 @@ def test_toasts_auto_dismiss_after_five_seconds():
     assert "window.clearTimeout(timer)" in source
 
 
-def test_upload_zone_limits_to_csv_and_exposes_sampling_inputs():
+def test_upload_zone_accepts_common_data_formats_and_exposes_sampling_inputs():
     source = read_frontend("components/UploadZone.jsx")
+    tabs = read_frontend("components/DatasetTabs.jsx")
 
-    assert 'accept=".csv,text/csv"' in source
+    for extension in [".csv", ".json", ".jsonl", ".xlsx", ".parquet", ".dta"]:
+        assert extension in source
+        assert extension in tabs
+    assert "DATA_FILE_ACCEPT" in source
+    assert "Add data" in tabs
     assert "sample_mode" in source
     assert "sample_n" in source
     assert "sample_frac" in source

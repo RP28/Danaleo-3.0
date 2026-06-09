@@ -14,7 +14,7 @@ import pandas as pd
 from danaleo.core.operations import apply_operation, operation_label
 from danaleo.core.plots import build_figure
 from danaleo.core.stats import column_cards, dataframe_overview, dataset_profile
-from danaleo.core.csv_ingestion import read_csv_detected
+from danaleo.core.data_ingestion import read_data_file, source_format
 
 
 @dataclass
@@ -59,6 +59,7 @@ class DatasetRecord:
     id: str
     csv_path: str
     csv_name: str
+    source_format: str
     sample_info: dict[str, Any] | None
     parse_info: dict[str, Any] | None
     active_session_id: str
@@ -107,7 +108,7 @@ class WorkspaceStore:
     @active_session_id.setter
     def active_session_id(self, value: str) -> None:
         if not self.active_dataset:
-            raise ValueError("Upload a CSV file first")
+            raise ValueError("Upload a data file first")
         self.active_dataset.active_session_id = value
 
     @property
@@ -121,7 +122,7 @@ class WorkspaceStore:
     @saved_plots.setter
     def saved_plots(self, value: dict[str, PlotRecord]) -> None:
         if not self.active_dataset:
-            raise ValueError("Upload a CSV file first")
+            raise ValueError("Upload a data file first")
         self.active_dataset.saved_plots = value
 
     @property
@@ -132,16 +133,21 @@ class WorkspaceStore:
         self.time_counter += 1
         return self.time_counter
 
-    def _read_csv_with_sampling(
+    def _read_data_with_sampling(
         self,
-        csv_path: str,
+        data_path: str,
+        filename: str,
         sample_mode: str = "none",
         sample_n: int | None = None,
         sample_frac: float | None = None,
         random_state: int = 42,
         parse_info: dict[str, Any] | None = None,
-    ) -> tuple[pd.DataFrame, dict[str, Any] | None, dict[str, Any]]:
-        df, detected_parse_info = read_csv_detected(csv_path, parse_info)
+    ) -> tuple[pd.DataFrame, dict[str, Any] | None, str, dict[str, Any]]:
+        df, detected_source_format, detected_parse_info = read_data_file(
+            data_path,
+            filename,
+            parse_info,
+        )
         sample_info: dict[str, Any] | None = None
         original_rows = len(df)
         if sample_mode == "n" and sample_n and sample_n > 0 and sample_n < len(df):
@@ -160,9 +166,9 @@ class WorkspaceStore:
                 "random_state": random_state,
                 "original_rows": int(original_rows),
             }
-        return df, sample_info, detected_parse_info
+        return df, sample_info, detected_source_format, detected_parse_info
 
-    def load_csv(
+    def load_data(
         self,
         file_bytes: bytes,
         filename: str,
@@ -171,14 +177,15 @@ class WorkspaceStore:
         sample_frac: float | None = None,
         random_state: int = 42,
     ) -> dict[str, Any]:
-        suffix = Path(filename).suffix or ".csv"
+        suffix = "".join(Path(filename).suffixes) or ".csv"
         with NamedTemporaryFile(delete=False, suffix=suffix, prefix="danaleo_") as tmp:
             tmp.write(file_bytes)
             tmp_path = tmp.name
 
         try:
-            df, sample_info, parse_info = self._read_csv_with_sampling(
+            df, sample_info, detected_source_format, parse_info = self._read_data_with_sampling(
                 tmp_path,
+                filename,
                 sample_mode,
                 sample_n,
                 sample_frac,
@@ -187,7 +194,17 @@ class WorkspaceStore:
         except Exception:
             Path(tmp_path).unlink(missing_ok=True)
             raise
-        return self._register_dataset(df, tmp_path, filename, sample_info, parse_info)
+        return self._register_dataset(
+            df,
+            tmp_path,
+            filename,
+            sample_info,
+            parse_info,
+            source_format=detected_source_format,
+        )
+
+    def load_csv(self, *args, **kwargs) -> dict[str, Any]:
+        return self.load_data(*args, **kwargs)
 
     def _register_dataset(
         self,
@@ -196,6 +213,7 @@ class WorkspaceStore:
         filename: str,
         sample_info: dict[str, Any] | None = None,
         parse_info: dict[str, Any] | None = None,
+        source_format: str = "delimited",
         session_name: str = "Base Session",
         creation_label: str = "Created Base Session",
         provenance: dict[str, Any] | None = None,
@@ -225,6 +243,7 @@ class WorkspaceStore:
             id=dataset_id,
             csv_path=csv_path,
             csv_name=filename,
+            source_format=source_format,
             sample_info=sample_info,
             parse_info=parse_info,
             active_session_id=base_id,
@@ -251,7 +270,7 @@ class WorkspaceStore:
             self.active_dataset_id = next(iter(self.datasets))
         return self.workspace_summary()
 
-    def load_csv_batch(
+    def load_data_batch(
         self,
         files: list[tuple[bytes, str]],
         sample_mode: str = "none",
@@ -260,14 +279,14 @@ class WorkspaceStore:
         random_state: int = 42,
     ) -> dict[str, Any]:
         if not files:
-            raise ValueError("Choose at least one CSV file")
+            raise ValueError("Choose at least one data file")
 
         previous_ids = set(self.datasets)
         previous_active_dataset_id = self.active_dataset_id
         previous_time = self.time_counter
         try:
             for file_bytes, filename in files:
-                self.load_csv(
+                self.load_data(
                     file_bytes,
                     filename,
                     sample_mode,
@@ -289,6 +308,9 @@ class WorkspaceStore:
             raise
         return self.workspace_summary()
 
+    def load_csv_batch(self, *args, **kwargs) -> dict[str, Any]:
+        return self.load_data_batch(*args, **kwargs)
+
     def _activate_dataset_for_session(self, session_id: str) -> None:
         if session_id in self.sessions:
             return
@@ -305,7 +327,7 @@ class WorkspaceStore:
 
     def require_session(self, session_id: str | None = None) -> SessionRecord:
         if not self.ready:
-            raise ValueError("Upload a CSV file first")
+            raise ValueError("Upload a data file first")
         sid = session_id or self.active_session_id
         if sid:
             self._activate_dataset_for_session(sid)
@@ -473,6 +495,7 @@ class WorkspaceStore:
             result,
             tmp_path,
             clean_name,
+            source_format="delimited",
             session_name="Merged result",
             creation_label=f"Created {how} join result",
             provenance=provenance,
@@ -657,6 +680,7 @@ class WorkspaceStore:
         return {
             "id": dataset.id,
             "csv_name": dataset.csv_name,
+            "source_format": dataset.source_format,
             "sample_info": dataset.sample_info,
             "parse_info": dataset.parse_info,
             "provenance": dataset.provenance,
@@ -694,7 +718,7 @@ class WorkspaceStore:
 
     def _project_manifest(self) -> dict[str, Any]:
         if not self.ready:
-            raise ValueError("Upload a CSV file first")
+            raise ValueError("Upload a data file first")
         return {
             "format": "danaleo.project",
             "version": 2,
@@ -705,10 +729,10 @@ class WorkspaceStore:
 
     def export_project(self) -> bytes:
         if not self.ready:
-            raise ValueError("Upload a CSV file first")
+            raise ValueError("Upload a data file first")
         for dataset in self.datasets.values():
             if not Path(dataset.csv_path).exists():
-                raise ValueError(f"Source CSV is no longer available: {dataset.csv_name}")
+                raise ValueError(f"Source data file is no longer available: {dataset.csv_name}")
 
         buffer = BytesIO()
         with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
@@ -720,15 +744,16 @@ class WorkspaceStore:
 
     def _restore_dataset(self, raw: dict[str, Any], source_bytes: bytes) -> DatasetRecord:
         csv_name = str(raw.get("csv_name") or "source.csv")
-        suffix = Path(csv_name).suffix or ".csv"
+        suffix = "".join(Path(csv_name).suffixes) or ".csv"
         with NamedTemporaryFile(delete=False, suffix=suffix, prefix="danaleo_") as tmp:
             tmp.write(source_bytes)
             tmp_path = tmp.name
 
         sample_info = raw.get("sample_info")
         if sample_info:
-            df, restored_sample_info, restored_parse_info = self._read_csv_with_sampling(
+            df, restored_sample_info, restored_source_format, restored_parse_info = self._read_data_with_sampling(
                 tmp_path,
+                csv_name,
                 sample_info.get("mode", "none"),
                 sample_info.get("sample_n"),
                 sample_info.get("sample_frac"),
@@ -738,8 +763,9 @@ class WorkspaceStore:
             if restored_sample_info:
                 restored_sample_info["original_rows"] = sample_info.get("original_rows", restored_sample_info["original_rows"])
         else:
-            df, restored_sample_info, restored_parse_info = self._read_csv_with_sampling(
+            df, restored_sample_info, restored_source_format, restored_parse_info = self._read_data_with_sampling(
                 tmp_path,
+                csv_name,
                 parse_info=raw.get("parse_info"),
             )
 
@@ -828,6 +854,7 @@ class WorkspaceStore:
             id=str(raw.get("id") or uuid4().hex),
             csv_path=tmp_path,
             csv_name=csv_name,
+            source_format=str(raw.get("source_format") or restored_source_format or source_format(csv_name)),
             sample_info=restored_sample_info,
             parse_info=restored_parse_info,
             active_session_id=str(active_session_id),
@@ -910,6 +937,7 @@ class WorkspaceStore:
         return {
             "id": dataset.id,
             "csv_name": dataset.csv_name,
+            "source_format": dataset.source_format,
             "sample_info": dataset.sample_info,
             "parse_info": dataset.parse_info,
             "provenance": dataset.provenance,
@@ -928,6 +956,7 @@ class WorkspaceStore:
             "datasets": [self.dataset_summary(dataset) for dataset in self.datasets.values()],
             "csv_name": self.csv_name,
             "csv_path": self.csv_path,
+            "source_format": self.active_dataset.source_format if self.active_dataset else None,
             "sample_info": self.sample_info,
             "parse_info": self.parse_info,
             "active_session_id": self.active_session_id,
