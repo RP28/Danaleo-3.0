@@ -37,6 +37,10 @@ def test_api_returns_400_before_upload_for_workspace_actions():
     assert export_response.status_code == 400
     assert "Nothing to export yet" in export_response.json()["detail"]
 
+    progress_response = client.get("/api/progress/download")
+    assert progress_response.status_code == 400
+    assert "Upload a CSV" in progress_response.json()["detail"]
+
 
 def test_upload_rejects_non_csv_file(csv_bytes: bytes):
     client = TestClient(app)
@@ -48,6 +52,22 @@ def test_upload_rejects_non_csv_file(csv_bytes: bytes):
 
     assert response.status_code == 400
     assert "CSV" in response.json()["detail"]
+
+
+def test_upload_rejects_malformed_csv_and_accepts_uppercase_extension():
+    client = TestClient(app)
+
+    malformed = client.post(
+        "/api/upload",
+        files={"file": ("broken.csv", b'a,b\n1,"unterminated\n', "text/csv")},
+    )
+    assert malformed.status_code == 400
+
+    uppercase = client.post(
+        "/api/upload",
+        files={"file": ("VALID.CSV", b"x\n1\n", "text/csv")},
+    )
+    assert uppercase.status_code == 200
 
 
 def test_upload_with_sampling_modes(csv_bytes: bytes):
@@ -67,6 +87,14 @@ def test_upload_with_sampling_modes(csv_bytes: bytes):
         "random_state": 7,
         "original_rows": 8,
     }
+
+    fractional = client.post(
+        "/api/upload",
+        data={"sample_mode": "frac", "sample_frac": "0.5", "random_state": "9"},
+        files={"file": ("customers.csv", csv_bytes, "text/csv")},
+    )
+    assert fractional.status_code == 200
+    assert fractional.json()["active_session"]["overview"]["rows"] == 4
 
 
 def test_api_end_to_end_workspace_flow(csv_bytes: bytes):
@@ -197,6 +225,33 @@ def test_api_returns_400_for_invalid_session_actions(csv_bytes: bytes):
     assert response.status_code == 400
     assert "Unknown column" in response.json()["detail"]
 
+    response = client.post("/api/sessions/activate", json={"session_id": "missing"})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Session not found"
+
+    response = client.post("/api/sessions", json={"name": "   ", "parent_id": base_id})
+    assert response.status_code == 400
+    assert "Session name is required" in response.json()["detail"]
+
+
+def test_api_supports_encoded_column_names_and_drop_duplicates(edge_csv_bytes: bytes):
+    client = TestClient(app)
+    workspace = upload_csv(client, edge_csv_bytes, "edge.csv")
+    base_id = workspace["active_session_id"]
+
+    stats = client.get(f"/api/sessions/{base_id}/columns/Age%20Years/stats")
+    assert stats.status_code == 200
+    assert stats.json()["name"] == "Age Years"
+
+    duplicate_upload = upload_csv(client, b"x,y\n1,A\n1,A\n2,B\n", "duplicates.csv")
+    duplicate_id = duplicate_upload["active_session_id"]
+    operated = client.post(
+        f"/api/sessions/{duplicate_id}/operations",
+        json={"operation_type": "drop_duplicates", "params": {}},
+    )
+    assert operated.status_code == 200
+    assert operated.json()["active_session"]["overview"]["rows"] == 2
+
 
 def test_api_operation_and_plot_error_edges(csv_bytes: bytes):
     client = TestClient(app)
@@ -240,6 +295,25 @@ def test_api_operation_and_plot_error_edges(csv_bytes: bytes):
     )
     assert bad_progress.status_code == 400
     assert ".danaleo" in bad_progress.json()["detail"]
+
+    corrupt_progress = client.post(
+        "/api/progress/load",
+        files={"file": ("corrupt.danaleo", b"not a zip", "application/zip")},
+    )
+    assert corrupt_progress.status_code == 400
+
+    bad_plot_type = client.post(
+        "/api/plots/preview",
+        json={"session_id": base_id, "column": "age", "plot_type": "unknown"},
+    )
+    assert bad_plot_type.status_code == 400
+    assert "Unsupported plot type" in bad_plot_type.json()["detail"]
+
+    missing_required_plot_field = client.post(
+        "/api/plots/preview",
+        json={"session_id": base_id, "column": "age"},
+    )
+    assert missing_required_plot_field.status_code == 422
 
 
 def test_frontend_assets_are_served_without_browser_cache():

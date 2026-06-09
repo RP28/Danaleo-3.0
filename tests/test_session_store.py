@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import json
 from io import BytesIO
+from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
 
 from danaleo.core.session_store import WorkspaceStore
+
+
+def project_bytes(manifest: dict, source: bytes = b"x\n1\n") -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr("source.csv", source)
+    return buffer.getvalue()
 
 
 def test_workspace_summary_before_upload_is_safe():
@@ -125,6 +135,15 @@ def test_create_session_rejects_missing_parent_and_blank_name(loaded_store: Work
         loaded_store.create_session("Branch", "missing")
 
 
+def test_create_session_defaults_to_active_parent_and_activation_validates(loaded_store: WorkspaceStore):
+    base_id = loaded_store.active_session_id
+    child = loaded_store.create_session("Child")
+
+    assert child["active_session"]["parent_id"] == base_id
+    with pytest.raises(ValueError, match="Session not found"):
+        loaded_store.set_active_session("missing")
+
+
 def test_sessions_are_independent_copies(loaded_store: WorkspaceStore):
     base_id = loaded_store.active_session_id
 
@@ -220,6 +239,34 @@ def test_delete_protects_the_only_session_and_unknown_sessions(loaded_store: Wor
     with pytest.raises(ValueError, match="Session not found"):
         loaded_store.rename_session("missing", "New name")
 
+    child_id = loaded_store.create_session("Child", base_id)["active_session_id"]
+    with pytest.raises(ValueError, match="Cannot delete every session"):
+        loaded_store.delete_session(base_id)
+    assert child_id in loaded_store.sessions
+
+
+def test_delete_non_active_session_preserves_active_session(loaded_store: WorkspaceStore):
+    base_id = loaded_store.active_session_id
+    first_id = loaded_store.create_session("First", base_id)["active_session_id"]
+    second_id = loaded_store.create_session("Second", base_id)["active_session_id"]
+
+    workspace = loaded_store.delete_session(first_id)
+
+    assert workspace["active_session_id"] == second_id
+    assert first_id not in loaded_store.sessions
+
+
+def test_preview_plot_does_not_mutate_store_or_advance_time(loaded_store: WorkspaceStore):
+    base_id = loaded_store.active_session_id
+    initial_time = loaded_store.time_counter
+    initial_plots = dict(loaded_store.saved_plots)
+
+    figure = loaded_store.preview_plot(base_id, "age", "histogram", controls={"bins": 4})
+
+    assert figure["plot_type"] == "histogram"
+    assert loaded_store.time_counter == initial_time
+    assert loaded_store.saved_plots == initial_plots
+
 
 def test_session_summary_keeps_created_overview_separate_from_current_overview(
     loaded_store: WorkspaceStore,
@@ -267,6 +314,131 @@ def test_delete_plot_removes_only_the_requested_saved_plot(loaded_store: Workspa
 
     assert first_plot_id not in loaded_store.saved_plots
     assert len(workspace["saved_plots"]) == 1
+
+
+def test_update_plot_changes_only_supplied_fields_and_default_title(loaded_store: WorkspaceStore):
+    base_id = loaded_store.active_session_id
+    workspace = loaded_store.save_plot(base_id, "age", "histogram")
+    plot = workspace["saved_plots"][0]
+
+    assert plot["title"] == "Histogram — age"
+    updated = loaded_store.update_plot(plot["id"], remark="reviewed")
+
+    assert updated["saved_plots"][0]["remark"] == "reviewed"
+    assert updated["saved_plots"][0]["include_in_export"] is True
+
+
+def test_project_export_requires_ready_store_and_existing_source(loaded_store: WorkspaceStore):
+    with pytest.raises(ValueError, match="Upload a CSV"):
+        WorkspaceStore().export_project()
+
+    Path(loaded_store.csv_path).unlink()
+    with pytest.raises(ValueError, match="Source CSV"):
+        loaded_store.export_project()
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({"format": "wrong", "version": 1, "sessions": [{}]}, "Unsupported"),
+        ({"format": "danaleo.project", "version": 1, "sessions": []}, "does not contain any sessions"),
+        (
+            {
+                "format": "danaleo.project",
+                "version": 1,
+                "sessions": [
+                    {
+                        "id": "child",
+                        "name": "Child",
+                        "parent_id": "missing",
+                        "created_time": 1,
+                        "operations": [],
+                    }
+                ],
+            },
+            "missing session",
+        ),
+    ],
+)
+def test_project_import_rejects_invalid_manifests(manifest, message):
+    with pytest.raises(ValueError, match=message):
+        WorkspaceStore().import_project(project_bytes(manifest))
+
+
+def test_project_import_rejects_missing_archive_members():
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("manifest.json", "{}")
+
+    with pytest.raises(ValueError, match="missing required project data"):
+        WorkspaceStore().import_project(buffer.getvalue())
+
+
+def test_project_import_rejects_missing_source_operation():
+    manifest = {
+        "format": "danaleo.project",
+        "version": 1,
+        "sessions": [
+            {"id": "base", "name": "Base", "parent_id": None, "created_time": 1, "operations": []},
+            {
+                "id": "child",
+                "name": "Child",
+                "parent_id": "base",
+                "source_operation_id": "missing-operation",
+                "created_time": 2,
+                "operations": [],
+            },
+        ],
+    }
+
+    with pytest.raises(ValueError, match="missing operation"):
+        WorkspaceStore().import_project(project_bytes(manifest))
+
+
+def test_project_import_falls_back_active_session_and_skips_orphan_plots():
+    manifest = {
+        "format": "danaleo.project",
+        "version": 1,
+        "active_session_id": "missing",
+        "sessions": [
+            {"id": "base", "name": "Base", "parent_id": None, "created_time": 1, "operations": []}
+        ],
+        "saved_plots": [
+            {
+                "id": "orphan",
+                "session_id": "missing",
+                "column": "x",
+                "plot_type": "histogram",
+                "created_time": 2,
+            }
+        ],
+    }
+
+    workspace = WorkspaceStore().import_project(project_bytes(manifest))
+
+    assert workspace["active_session_id"] == "base"
+    assert workspace["saved_plots"] == []
+
+
+def test_project_export_import_preserves_sampling_and_time_progression(csv_bytes: bytes):
+    workspace_store = WorkspaceStore()
+    original = workspace_store.load_csv(
+        csv_bytes,
+        "customers.csv",
+        sample_mode="frac",
+        sample_frac=0.5,
+        random_state=11,
+    )
+    original_time = workspace_store.time_counter
+
+    restored_store = WorkspaceStore()
+    restored = restored_store.import_project(workspace_store.export_project())
+
+    assert restored["sample_info"] == original["sample_info"]
+    assert restored["active_session"]["overview"]["rows"] == 4
+    assert restored_store.time_counter == original_time
+    restored_store.create_session("After restore")
+    assert restored_store.time_counter > original_time
 
 
 def test_project_export_import_replays_operations_without_duplicate_session_data(

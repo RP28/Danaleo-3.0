@@ -52,6 +52,7 @@ def test_export_notebook_recreates_sessions_operations_selected_plots(csv_bytes:
 
     assert "Danaleo EDA Export: customers.csv" in combined_sources
     assert "df = pd.read_csv" in combined_sources
+    assert "df = pd.read_csv('customers.csv')" in combined_sources
     assert "df = df.sample(n=6, random_state=3).reset_index(drop=True)" in combined_sources
     assert "df_sydney_cleanup = df.copy()" in combined_sources
     assert "df_sydney_cleanup = df_sydney_cleanup.query(\"city == 'Sydney'\").copy()" in combined_sources
@@ -145,6 +146,42 @@ def test_export_replays_replace_values_and_drop_missing_operations(csv_bytes: by
 
     assert "df['segment'] = df['segment'].replace('A', 'Alpha')" in combined_sources
     assert "df = df.dropna(subset=['income']).copy()" in combined_sources
+
+
+def test_export_replays_typed_and_multiple_replacements():
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(b"value,flag\n1,true\n2,false\n", "typed.csv")
+    base_id = workspace_store.active_session_id
+    workspace_store.apply_session_operation(
+        base_id,
+        "replace_values",
+        {"column": "value", "old_value": "1, 2", "new_value": "10, 20", "multiple": True},
+    )
+    workspace_store.apply_session_operation(
+        base_id,
+        "replace_values",
+        {"column": "flag", "old_value": "true", "new_value": "false", "multiple": False},
+    )
+
+    combined_sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "df['value'] = df['value'].replace([1, 2], [10, 20])" in combined_sources
+    assert "df['flag'] = df['flag'].replace(True, False)" in combined_sources
+
+
+def test_export_replacement_with_missing_value_compiles():
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(b"value\n1\n2\n", "missing.csv")
+    workspace_store.apply_session_operation(
+        workspace_store.active_session_id,
+        "replace_values",
+        {"column": "value", "old_value": "1", "new_value": "null"},
+    )
+
+    notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
+    operation_cell = next(cell.source for cell in notebook.cells if ".replace(1, pd.NA)" in cell.source)
+
+    compile(operation_cell, "<replace-missing>", "exec")
 
 
 def test_export_replays_drop_duplicates_operation():
@@ -253,3 +290,13 @@ def test_exported_plot_cells_do_not_define_plotting_helpers(csv_bytes: bytes):
     assert not any(source.lstrip().startswith("def ") for source in code_sources)
     assert any("sns.histplot(" in source for source in code_sources)
     assert any("sns.heatmap(" in source for source in code_sources)
+
+
+def test_export_without_saved_plots_has_no_selected_plots_section(csv_bytes: bytes):
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(csv_bytes, "customers.csv")
+
+    combined_sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "# Selected plots" not in combined_sources
+    assert "sns." not in combined_sources

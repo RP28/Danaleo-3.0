@@ -174,6 +174,23 @@ def test_workspace_is_overview_first_and_keeps_sessions_in_dedicated_view():
     assert "Find a column" in sidebar
 
 
+def test_loading_new_or_saved_data_resets_transient_workspace_state():
+    app = read_frontend("App.jsx")
+
+    assert "const openWorkspace = useCallback" in app
+    assert "setSelectedColumn(null)" in app
+    assert "setColumnStats(null)" in app
+    assert "setActiveFigure(null)" in app
+    assert "setActiveView('overview')" in app
+    assert "onUploaded={openWorkspace}" in app
+
+
+def test_dataset_plot_builder_resets_when_active_session_changes():
+    overview = read_frontend("components/OverviewDashboard.jsx")
+
+    assert "key={session.id}" in overview
+
+
 def test_dataset_level_plots_are_not_in_column_plot_builder():
     builder = read_frontend("components/PlotBuilder.jsx")
     dataset_builder = read_frontend("components/DatasetPlotBuilder.jsx")

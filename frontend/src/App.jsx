@@ -170,8 +170,16 @@ export default function App() {
     }
   }, []);
 
+  const openWorkspace = useCallback((next) => {
+    setWorkspace(next);
+    setSelectedColumn(null);
+    setColumnStats(null);
+    setActiveFigure(null);
+    setActiveView('overview');
+  }, []);
+
   if (!workspace?.ready) {
-    return <UploadZone onUploaded={setWorkspace} onError={(text) => setToast({ type: 'error', text })} toast={toast} setToast={setToast} />;
+    return <UploadZone onUploaded={openWorkspace} onError={(text) => setToast({ type: 'error', text })} toast={toast} setToast={setToast} />;
   }
 
   function exploreColumn(column) {

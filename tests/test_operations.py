@@ -27,6 +27,8 @@ def test_parse_scalar_supports_common_input_types():
     assert pd.isna(parse_scalar("none"))
     assert pd.isna(parse_scalar("nan"))
     assert parse_scalar("abc") == "abc"
+    assert parse_scalar("  abc  ") == "abc"
+    assert parse_scalar("1e3") == 1000.0
 
 
 def test_filter_rows_returns_copy_and_rejects_empty_query():
@@ -97,6 +99,18 @@ def test_replace_values_supports_single_and_multiple_replacements():
     )
     assert multiple["category"].tolist()[:3] == ["Alpha", "Beta", "Alpha"]
 
+    spaced = apply_operation(
+        df,
+        "replace_values",
+        {
+            "column": "category",
+            "old_value": " A, B ",
+            "new_value": " Alpha, Beta ",
+            "multiple": True,
+        },
+    )
+    assert spaced["category"].tolist()[:3] == ["Alpha", "Beta", "Alpha"]
+
     with pytest.raises(ValueError, match="same comma-separated count"):
         apply_operation(
             df,
@@ -129,6 +143,10 @@ def test_drop_duplicates_removes_exact_duplicate_rows():
 
     assert result.to_dict(orient="records") == [{"x": 1, "group": "A"}, {"x": 2, "group": "B"}]
     assert len(df) == 3
+
+    unchanged = apply_operation(result, "drop_duplicates", {})
+    assert unchanged.equals(result)
+    assert unchanged is not result
 
 
 def test_unsupported_operation_type_is_rejected():

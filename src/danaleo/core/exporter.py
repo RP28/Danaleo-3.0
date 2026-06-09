@@ -6,9 +6,19 @@ from io import StringIO
 from typing import Any
 
 import nbformat as nbf
+import pandas as pd
 
+from danaleo.core.operations import parse_scalar
 from danaleo.core.plots import notebook_plot_code
 from danaleo.core.session_store import WorkspaceStore
+
+
+def _python_literal(value: Any) -> str:
+    if value is pd.NA:
+        return "pd.NA"
+    if isinstance(value, list):
+        return "[" + ", ".join(_python_literal(item) for item in value) + "]"
+    return repr(value)
 
 
 def _base_var_name(session_name: str) -> str:
@@ -40,7 +50,13 @@ def _operation_code(df_var: str, operation_type: str, params: dict[str, Any]) ->
 
     if operation_type == "replace_values":
         col = params.get("column", "")
-        return f"{df_var}[{col!r}] = {df_var}[{col!r}].replace({params.get('old_value', '')!r}, {params.get('new_value', '')!r})"
+        if params.get("multiple", False):
+            old_value = [parse_scalar(value) for value in str(params.get("old_value", "")).split(",")]
+            new_value = [parse_scalar(value) for value in str(params.get("new_value", "")).split(",")]
+        else:
+            old_value = parse_scalar(str(params.get("old_value", "")))
+            new_value = parse_scalar(str(params.get("new_value", "")))
+        return f"{df_var}[{col!r}] = {df_var}[{col!r}].replace({_python_literal(old_value)}, {_python_literal(new_value)})"
 
     if operation_type == "drop_missing":
         col = params.get("column", "")
@@ -110,7 +126,7 @@ def export_notebook(store: WorkspaceStore) -> bytes:
     )
 
     cells.append(nbf.v4.new_markdown_cell("## Load data"))
-    load_code = f"df = pd.read_csv({(store.csv_path or store.csv_name or 'data.csv')!r})"
+    load_code = f"df = pd.read_csv({(store.csv_name or 'data.csv')!r})"
     if store.sample_info:
         info = store.sample_info
         if info.get("mode") == "n":

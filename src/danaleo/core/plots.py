@@ -675,7 +675,12 @@ def _notebook_plot_lines(
             lines.append(f"{ax}.tick_params(axis='x', labelrotation=35)")
     elif plot_type == "grouped_kde":
         lines.append(
-            f"sns.kdeplot(data={df}, x={column_expr}, hue={group_by!r}, "
+            f"_groups = {df}[{group_by!r}].astype('string').fillna('<missing>').value_counts()"
+            f".head({_as_int(controls.get('group_limit'), 8, 1, 30)}).index"
+        )
+        lines.append(f"_grouped = {df}[{df}[{group_by!r}].astype('string').fillna('<missing>').isin(_groups)]")
+        lines.append(
+            f"sns.kdeplot(data=_grouped, x={column_expr}, hue={group_by!r}, "
             f"bw_adjust={_as_float(controls.get('bw_adjust'), 1.0, 0.05, 10)!r}, "
             f"fill={_as_bool(controls.get('fill'), True)!r}, common_norm=False, ax={ax})"
         )
@@ -694,9 +699,17 @@ def _notebook_plot_lines(
             lines.append(f"sns.violinplot(data=_grouped, x={group_by!r}, y={column_expr}, order=_groups, inner='quartile', ax={ax})")
         lines.append(f"{ax}.tick_params(axis='x', labelrotation=35)")
     elif plot_type == "scatter":
+        data_expr = df
+        if group_by:
+            lines.append(
+                f"_groups = {df}[{group_by!r}].astype('string').fillna('<missing>').value_counts()"
+                f".head({_as_int(controls.get('group_limit'), 8, 1, 30)}).index"
+            )
+            lines.append(f"_grouped = {df}[{df}[{group_by!r}].astype('string').fillna('<missing>').isin(_groups)]")
+            data_expr = "_grouped"
         hue = f", hue={group_by!r}" if group_by else ""
         lines.append(
-            f"sns.scatterplot(data={df}, x={column_expr}, y={compare_with!r}{hue}, "
+            f"sns.scatterplot(data={data_expr}, x={column_expr}, y={compare_with!r}{hue}, "
             f"s={_as_float(controls.get('marker_size'), 28, 4, 300)!r}, "
             f"alpha={_as_float(controls.get('alpha'), 0.72, 0.05, 1)!r}, ax={ax})"
         )

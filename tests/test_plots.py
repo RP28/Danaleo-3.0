@@ -192,6 +192,111 @@ def test_subplot_rejects_unknown_column(plot_df):
         )
 
 
+def test_plot_edge_cases_for_degenerate_data():
+    with pytest.raises(ValueError, match="at least two"):
+        build_figure(pd.DataFrame({"x": [1]}), "x", "kde")
+
+    with pytest.raises(ValueError, match="at least two numeric"):
+        build_figure(pd.DataFrame({"x": [1, 2]}), "x", "correlation_heatmap")
+
+    with pytest.raises(ValueError, match="no paired numeric"):
+        build_figure(
+            pd.DataFrame({"x": [1, None], "y": [None, 2]}),
+            "x",
+            "scatter",
+            controls={"compare_with": "y"},
+        )
+
+    with pytest.raises(ValueError, match="no numeric values"):
+        build_figure(
+            pd.DataFrame({"x": [None, None], "group": ["A", "B"]}),
+            "x",
+            "grouped_box",
+            controls={"group_by": "group"},
+        )
+
+    with pytest.raises(ValueError, match="selected groups have no paired"):
+        build_figure(
+            pd.DataFrame({"x": [1, None], "y": [None, 2], "group": ["A", "B"]}),
+            "x",
+            "scatter",
+            controls={"compare_with": "y", "group_by": "group"},
+        )
+
+
+def test_missing_values_plot_handles_complete_dataset_and_subplot_validation(plot_df):
+    payload = build_figure(plot_df.drop(columns=["category"]), "value", "missing_values")
+    assert_png_payload(payload)
+
+    with pytest.raises(ValueError, match="at least two columns"):
+        build_figure(
+            plot_df,
+            "value",
+            "histogram",
+            controls={"subplot_enabled": True, "subplot_columns": []},
+        )
+
+
+def test_plot_controls_coerce_and_clamp_invalid_values(plot_df):
+    payload = build_figure(
+        plot_df,
+        "value",
+        "histogram",
+        controls={"bins": "not-a-number", "show_kde": "yes", "points": 5, "bw_adjust": -4},
+    )
+    assert_png_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("plot_type", "column", "controls", "expected"),
+    [
+        ("kde", "value", {}, "sns.kdeplot("),
+        ("box", "value", {}, "sns.boxplot("),
+        ("violin", "value", {}, "sns.violinplot("),
+        ("bar_top_n", "group", {"orientation": "horizontal"}, "sns.barplot("),
+        ("pie_top_n", "group", {}, "_ax.pie("),
+        ("grouped_kde", "value", {"group_by": "group", "group_limit": 2}, "sns.kdeplot(data=_grouped"),
+        ("grouped_box", "value", {"group_by": "group"}, "sns.boxplot(data=_grouped"),
+        ("grouped_violin", "value", {"group_by": "group"}, "sns.violinplot(data=_grouped"),
+        ("scatter", "value", {"compare_with": "other", "group_by": "group"}, "sns.scatterplot(data=_grouped"),
+        ("hexbin", "value", {"compare_with": "other"}, "_ax.hexbin("),
+        ("line", "value", {"compare_with": "other", "show_markers": False}, "sns.lineplot("),
+        ("correlation_heatmap", "value", {}, "sns.heatmap("),
+        ("missing_values", "value", {}, "_missing ="),
+    ],
+)
+def test_notebook_plot_code_compiles_for_every_plot_family(plot_type, column, controls, expected):
+    code = notebook_plot_code(plot_type, "df", column, controls=controls)
+    compile(code, f"<{plot_type}>", "exec")
+    assert expected in code
+    assert "def " not in code
+
+
+def test_notebook_subplot_code_compiles_and_applies_visual_settings():
+    code = notebook_plot_code(
+        "histogram",
+        "df",
+        "value",
+        controls={
+            "subplot_enabled": True,
+            "subplot_columns": ["other"],
+            "subplot_cols": 1,
+            "chart_title": "Comparison",
+            "log_y": True,
+            "show_grid": False,
+        },
+    )
+
+    compile(code, "<subplot>", "exec")
+    assert "for _ax, _column in zip" in code
+    assert "_ax.set_title('Comparison')" in code
+    assert "_ax.set_yscale('log')" in code
+    assert "_ax.grid(" not in code
+
+    with pytest.raises(ValueError, match="Unsupported plot type"):
+        notebook_plot_code("unknown", "df", "value")
+
+
 def test_notebook_plot_code_keeps_notebook_export_reproducible():
     code = notebook_plot_code(
         "histogram",

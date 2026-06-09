@@ -14,11 +14,12 @@ def parse_scalar(value: str) -> Any:
     if raw.lower() in {"none", "null", "nan"}:
         return pd.NA
     try:
-        if "." not in raw:
-            return int(raw)
-        return float(raw)
+        return int(raw)
     except ValueError:
-        return value
+        try:
+            return float(raw)
+        except ValueError:
+            return raw
 
 
 def apply_operation(df: pd.DataFrame, operation_type: str, params: dict[str, Any]) -> pd.DataFrame:

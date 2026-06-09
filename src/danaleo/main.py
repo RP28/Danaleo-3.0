@@ -24,6 +24,7 @@ REQUIRED_MODULES = {
     "numpy": "numpy",
     "plotly": "plotly",
     "matplotlib": "matplotlib",
+    "seaborn": "seaborn",
     "nbformat": "nbformat",
     "pydantic": "pydantic",
 }

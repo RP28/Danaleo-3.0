@@ -109,6 +109,7 @@ export default function OverviewDashboard({ session, onSelectColumn, onOpenExplo
       </section>
 
       <DatasetPlotBuilder
+        key={session.id}
         sessionId={session.id}
         anchorColumn={columns[0]?.name}
         onSaved={onSaved}

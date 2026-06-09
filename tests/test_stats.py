@@ -64,6 +64,39 @@ def test_dataset_profile_surfaces_quality_relationships_and_preview():
     assert len(profile["preview"]) == 4
 
 
+def test_dataset_profile_handles_empty_datetime_and_wide_dataframes():
+    empty = dataset_profile(pd.DataFrame())
+    assert empty["rows"] == 0
+    assert empty["missing_pct"] == 0.0
+    assert empty["preview"] == []
+
+    data = {f"n{i}": [i, i + 1] for i in range(45)}
+    data["when"] = pd.to_datetime(["2026-01-01", None])
+    profile = dataset_profile(pd.DataFrame(data), preview_rows=1)
+
+    assert profile["datetime_columns"] == 1
+    assert profile["correlation_columns_analyzed"] == 40
+    assert len(profile["preview_columns"]) == 12
+    assert len(profile["preview"]) == 1
+
+
+def test_column_stats_handles_all_missing_numeric_and_datetime_values():
+    df = pd.DataFrame(
+        {
+            "numeric": pd.Series([None, None], dtype="float64"),
+            "when": pd.to_datetime(["2026-01-01", None]),
+        }
+    )
+
+    numeric = column_stats(df, "numeric")
+    when = column_stats(df, "when")
+
+    assert numeric["missing_pct"] == 100.0
+    assert all(value is None for value in numeric["stats"].values())
+    assert when["kind"] == "datetime"
+    assert when["sample_values"] == ["2026-01-01 00:00:00"]
+
+
 def test_column_stats_for_numeric_and_categorical_columns():
     df = pd.DataFrame({"num": [1, 2, 3, None], "cat": ["A", "B", "A", None]})
 
