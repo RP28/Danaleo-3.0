@@ -170,6 +170,26 @@ def test_drop_duplicates_is_recorded_in_session_history():
     assert next_workspace["active_session"]["operations"][-1]["label"] == "Drop duplicate rows"
 
 
+def test_imputation_is_recorded_and_replayed_by_progress_export():
+    workspace_store = WorkspaceStore()
+    workspace = workspace_store.load_csv(b"value,label\n1,A\n,B\n3,\n", "missing.csv")
+    session_id = workspace["active_session_id"]
+
+    imputed = workspace_store.apply_session_operation(
+        session_id,
+        "impute_missing",
+        {"column": "value", "method": "mean"},
+    )
+
+    assert imputed["active_session"]["operations"][-1]["label"] == "Impute value: Mean"
+    assert workspace_store.sessions[session_id].data["value"].tolist() == [1.0, 2.0, 3.0]
+
+    restored_store = WorkspaceStore()
+    restored = restored_store.import_project(workspace_store.export_project())
+    assert restored["active_session"]["profile"]["missing_cells"] == 1
+    assert restored_store.require_session().data["value"].tolist() == [1.0, 2.0, 3.0]
+
+
 def test_child_session_created_after_parent_operations_uses_current_snapshot_but_not_future_parent_changes(
     loaded_store: WorkspaceStore,
 ):

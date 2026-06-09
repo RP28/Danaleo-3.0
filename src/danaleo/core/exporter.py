@@ -88,6 +88,25 @@ def _operation_code(df_var: str, operation_type: str, params: dict[str, Any]) ->
     if operation_type == "drop_duplicates":
         return f"{df_var} = {df_var}.drop_duplicates().copy()"
 
+    if operation_type == "impute_missing":
+        col = params.get("column", "")
+        method = params.get("method", "")
+        target = f"{df_var}[{col!r}]"
+        if method == "mean":
+            return f"{target} = {target}.fillna({target}.mean())"
+        if method == "median":
+            return f"{target} = {target}.fillna({target}.median())"
+        if method == "mode":
+            return f"{target} = {target}.fillna({target}.mode(dropna=True).iloc[0])"
+        if method == "constant":
+            return f"{target} = {target}.fillna({_python_literal(parse_scalar(str(params.get('value', ''))))})"
+        if method == "forward_fill":
+            return f"{target} = {target}.ffill()"
+        if method == "backward_fill":
+            return f"{target} = {target}.bfill()"
+        if method == "interpolate":
+            return f"{target} = {target}.interpolate(method='linear')"
+
     return f"# Operation not exported yet: {operation_type}"
 
 

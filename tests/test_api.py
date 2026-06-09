@@ -354,6 +354,20 @@ def test_api_supports_encoded_column_names_and_drop_duplicates(edge_csv_bytes: b
     assert operated.json()["active_session"]["overview"]["rows"] == 2
 
 
+def test_api_applies_imputation_operation():
+    client = TestClient(app)
+    workspace = upload_csv(client, b"value,label\n1,A\n,B\n3,\n", "missing.csv")
+
+    response = client.post(
+        f"/api/sessions/{workspace['active_session_id']}/operations",
+        json={"operation_type": "impute_missing", "params": {"column": "value", "method": "median"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active_session"]["operations"][-1]["label"] == "Impute value: Median"
+    assert response.json()["active_session"]["profile"]["missing_cells"] == 1
+
+
 def test_api_operation_and_plot_error_edges(csv_bytes: bytes):
     client = TestClient(app)
     workspace = upload_csv(client, csv_bytes)

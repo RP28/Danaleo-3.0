@@ -65,6 +65,18 @@ def test_session_tree_shows_parent_context_and_active_lineage():
     assert "parentName: parent?.name" in source
 
 
+def test_session_tree_shows_merged_dataframe_sources():
+    source = read_frontend("components/SessionTree.jsx")
+    styles = read_frontend("styles.css")
+
+    assert "tree-merge-lineage" in source
+    assert "provenance.left_dataset_name" in source
+    assert "provenance.right_dataset_name" in source
+    assert "provenance.left_session_name" in source
+    assert "provenance.right_session_name" in source
+    assert ".tree-merge-lineage" in styles
+
+
 def test_session_tree_branches_child_from_last_parent_operation_when_created_after_operations():
     source = read_frontend("components/SessionTree.jsx")
 
@@ -292,6 +304,34 @@ def test_recent_session_operations_panel_removed_from_column_details():
     assert "Recent session operations" not in source
     assert "operation-list" not in source
     assert "activeSession.operations" not in source
+
+
+def test_column_operations_expose_imputation_methods():
+    app = read_frontend("App.jsx")
+    details = read_frontend("components/ColumnDetails.jsx")
+    operations = (ROOT / "src" / "danaleo" / "core" / "operations.py").read_text(encoding="utf-8")
+
+    assert "impute_missing" in details
+    assert 'key={`${activeSessionId}-${selectedColumn}`}' in app
+    assert "statsRevision" in app
+    for method in ["mean", "median", "mode", "constant", "forward_fill", "backward_fill", "interpolate"]:
+        assert method in details
+        assert f'"{method}"' in operations
+
+
+def test_save_actions_open_named_file_dialog_with_location_picker():
+    app = read_frontend("App.jsx")
+    dialog = read_frontend("components/SaveFileDialog.jsx")
+    api = read_frontend("api.js")
+
+    assert "SaveFileDialog" in app
+    assert "setSaveDialog" in app
+    assert "progressFile" in api
+    assert "notebookFile" in api
+    assert "showSaveFilePicker" in dialog
+    assert "suggestedName" in dialog
+    assert "Choose location and save" in dialog
+    assert "downloadFallback" in dialog
 
 
 def test_column_delete_is_in_sidebar_column_section():

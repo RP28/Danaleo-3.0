@@ -9,6 +9,7 @@ import SavedPlots from './components/SavedPlots.jsx';
 import OverviewDashboard from './components/OverviewDashboard.jsx';
 import Toast from './components/Toast.jsx';
 import DatasetTabs from './components/DatasetTabs.jsx';
+import SaveFileDialog from './components/SaveFileDialog.jsx';
 import { BarChart3, Download, GitBranch, LayoutDashboard, Save, Trash2 } from 'lucide-react';
 
 
@@ -29,6 +30,8 @@ export default function App() {
   const [activeFigure, setActiveFigure] = useState(null);
   const [toast, setToast] = useState(null);
   const [activeView, setActiveView] = useState('overview');
+  const [saveDialog, setSaveDialog] = useState(null);
+  const [statsRevision, setStatsRevision] = useState(0);
 
   const activeSession = workspace?.active_session;
   const activeSessionId = workspace?.active_session_id;
@@ -59,7 +62,7 @@ export default function App() {
       }
     }
     loadStats();
-  }, [selectedColumn, activeSessionId]);
+  }, [selectedColumn, activeSessionId, statsRevision]);
 
   const numericColumns = useMemo(() => {
     return activeSession?.columns?.filter((c) => c.kind === 'numeric').map((c) => c.name) || [];
@@ -84,6 +87,7 @@ export default function App() {
     try {
       const next = await promise;
       applyWorkspace(next);
+      setStatsRevision((revision) => revision + 1);
     } catch (err) {
       setToast({ type: 'error', text: err.message });
     }
@@ -162,14 +166,13 @@ export default function App() {
     }
   }, []);
 
-  const saveProgress = useCallback(async () => {
-    try {
-      await api.saveProgress();
-      setToast({ type: 'success', text: 'Progress file saved' });
-    } catch (err) {
-      setToast({ type: 'error', text: err.message });
-    }
-  }, []);
+  const activeDataset = workspace?.datasets.find((dataset) => dataset.id === workspace.active_dataset_id);
+  const progressName = workspace?.datasets.length > 1
+    ? 'danaleo_workspace.danaleo'
+    : `${workspace?.csv_name?.replace(/\.[^.]+$/, '') || 'danaleo_progress'}.danaleo`;
+  const notebookName = workspace?.datasets.length > 1
+    ? 'danaleo_eda_notebooks.zip'
+    : `${workspace?.csv_name?.replace(/\.[^.]+$/, '') || 'danaleo'}${activeDataset?.provenance?.type === 'merge' ? '_merged' : ''}_eda.ipynb`;
 
   const openWorkspace = useCallback((next, resetView = true) => {
     setWorkspace(next);
@@ -209,8 +212,8 @@ export default function App() {
           </div>
           <div className="topbar-actions">
             <button className="ghost-btn" onClick={resetToUpload}><Trash2 size={16}/> Clear workspace</button>
-            <button className="ghost-btn" onClick={saveProgress}><Save size={16}/> Save progress</button>
-            <button className="primary-btn" onClick={() => api.exportNotebook().catch((err) => setToast({ type: 'error', text: err.message }))}><Download size={16}/> Export ipynb</button>
+            <button className="ghost-btn" onClick={() => setSaveDialog({ title: 'Save Danaleo progress', suggestedName: progressName, loadFile: api.progressFile })}><Save size={16}/> Save progress</button>
+            <button className="primary-btn" onClick={() => setSaveDialog({ title: 'Export Jupyter notebook', suggestedName: notebookName, loadFile: api.notebookFile })}><Download size={16}/> Export ipynb</button>
           </div>
         </header>
 
@@ -251,6 +254,7 @@ export default function App() {
         {activeView === 'explore' && (
           <section className="main-grid">
             <ColumnDetails
+              key={`${activeSessionId}-${selectedColumn}`}
               stats={columnStats}
               column={selectedColumn}
               onApply={(operation, params) => handleWorkspaceUpdate(api.applyOperation(activeSessionId, operation, params))}
@@ -279,6 +283,14 @@ export default function App() {
           </section>
         )}
       </main>
+      {saveDialog && (
+        <SaveFileDialog
+          config={saveDialog}
+          onClose={() => setSaveDialog(null)}
+          onSaved={(filename) => setToast({ type: 'success', text: `Saved ${filename}` })}
+          onError={(text) => setToast({ type: 'error', text })}
+        />
+      )}
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );

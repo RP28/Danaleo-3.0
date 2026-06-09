@@ -15,6 +15,13 @@ async function request(path, options = {}) {
   return res;
 }
 
+function responseFilename(res, fallbackFilename) {
+  const disposition = res.headers.get('content-disposition') || '';
+  const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/);
+  const headerFilename = match?.[1] || match?.[2];
+  return headerFilename ? decodeURIComponent(headerFilename) : fallbackFilename;
+}
+
 export const api = {
   workspace: () => request('/api/workspace'),
   resetWorkspace: () => request('/api/workspace/reset', { method: 'POST' }),
@@ -65,45 +72,30 @@ export const api = {
     body: JSON.stringify(payload)
   }),
   deletePlot: (plotId) => request(`/api/plots/${plotId}`, { method: 'DELETE' }),
-  saveProgress: async () => {
+  progressFile: async () => {
     const res = await request('/api/progress/download');
     const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const disposition = res.headers.get('content-disposition') || '';
-    const match = disposition.match(/filename="(.+)"/);
-    a.download = match?.[1] || 'danaleo_progress.danaleo';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    return {
+      blob,
+      filename: responseFilename(res, 'danaleo_progress.danaleo'),
+      extension: '.danaleo',
+      mediaType: 'application/vnd.danaleo.project+zip',
+      description: 'Danaleo progress file',
+    };
   },
-  exportNotebook: async () => {
+  notebookFile: async () => {
     const res = await request('/api/export/notebook');
     const blob = await res.blob();
-
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-
-    a.href = url;
-
-    const disposition = res.headers.get('content-disposition') || '';
-    const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/);
-
-    const headerFilename = match?.[1] || match?.[2];
-    const fallbackFilename = blob.type.includes('zip')
+    const isZip = blob.type.includes('zip');
+    const fallbackFilename = isZip
       ? 'danaleo_eda_notebooks.zip'
       : 'danaleo_eda.ipynb';
-
-    a.download = headerFilename
-      ? decodeURIComponent(headerFilename)
-      : fallbackFilename;
-
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-
-    window.URL.revokeObjectURL(url);
+    return {
+      blob,
+      filename: responseFilename(res, fallbackFilename),
+      extension: isZip ? '.zip' : '.ipynb',
+      mediaType: isZip ? 'application/zip' : 'application/x-ipynb+json',
+      description: isZip ? 'Danaleo notebook archive' : 'Jupyter notebook',
+    };
   }
 };

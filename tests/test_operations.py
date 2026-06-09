@@ -149,6 +149,64 @@ def test_drop_duplicates_removes_exact_duplicate_rows():
     assert unchanged is not result
 
 
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("mean", [1.0, 3.0, 5.0, 3.0]),
+        ("median", [1.0, 3.0, 5.0, 3.0]),
+        ("mode", [1.0, 3.0, 5.0, 1.0]),
+        ("constant", [1.0, 3.0, 5.0, 99.0]),
+        ("forward_fill", [1.0, 3.0, 5.0, 5.0]),
+        ("backward_fill", [1.0, 3.0, 5.0, None]),
+        ("interpolate", [1.0, 3.0, 5.0, 5.0]),
+    ],
+)
+def test_impute_missing_supports_common_methods(method, expected):
+    df = pd.DataFrame({"value": [1.0, 3.0, 5.0, None]})
+    params = {"column": "value", "method": method}
+    if method == "constant":
+        params["value"] = "99"
+
+    if method == "backward_fill":
+        with pytest.raises(ValueError, match="could not fill any values"):
+            apply_operation(df, "impute_missing", params)
+        return
+
+    result = apply_operation(df, "impute_missing", params)
+
+    assert result["value"].tolist() == expected
+    assert df["value"].isna().sum() == 1
+
+
+def test_impute_missing_supports_text_mode_and_directional_fill():
+    df = pd.DataFrame({"label": [None, "A", None, "A", "B", None]})
+
+    mode = apply_operation(df, "impute_missing", {"column": "label", "method": "mode"})
+    forward = apply_operation(df, "impute_missing", {"column": "label", "method": "forward_fill"})
+    backward = apply_operation(df, "impute_missing", {"column": "label", "method": "backward_fill"})
+
+    assert mode["label"].tolist() == ["A", "A", "A", "A", "B", "A"]
+    assert forward["label"].isna().sum() == 1
+    assert backward["label"].isna().sum() == 1
+
+
+def test_impute_missing_validates_column_method_and_dtype():
+    df = pd.DataFrame({"label": ["A", None], "complete": [1, 2], "empty": [None, None]})
+
+    with pytest.raises(ValueError, match="Column not found"):
+        apply_operation(df, "impute_missing", {"column": "missing", "method": "mode"})
+    with pytest.raises(ValueError, match="Unsupported imputation method"):
+        apply_operation(df, "impute_missing", {"column": "label", "method": "magic"})
+    with pytest.raises(ValueError, match="requires a numeric column"):
+        apply_operation(df, "impute_missing", {"column": "label", "method": "mean"})
+    with pytest.raises(ValueError, match="has no missing values"):
+        apply_operation(df, "impute_missing", {"column": "complete", "method": "mean"})
+    with pytest.raises(ValueError, match="requires at least one non-missing value"):
+        apply_operation(df, "impute_missing", {"column": "empty", "method": "mode"})
+    with pytest.raises(ValueError, match="requires a replacement value"):
+        apply_operation(df, "impute_missing", {"column": "label", "method": "constant"})
+
+
 def test_unsupported_operation_type_is_rejected():
     with pytest.raises(ValueError, match="Unsupported operation"):
         apply_operation(sample_df(), "explode_everything", {})
@@ -160,4 +218,5 @@ def test_operation_labels_are_human_readable():
     assert operation_label("replace_values", {"column": "x"}) == "Replace in x"
     assert operation_label("drop_missing", {"column": "x"}) == "Drop missing: x"
     assert operation_label("drop_duplicates", {}) == "Drop duplicate rows"
+    assert operation_label("impute_missing", {"column": "x", "method": "forward_fill"}) == "Impute x: Forward Fill"
     assert operation_label("unknown_op", {}) == "Unknown Op"

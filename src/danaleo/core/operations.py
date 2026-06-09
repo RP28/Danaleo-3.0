@@ -68,6 +68,59 @@ def apply_operation(df: pd.DataFrame, operation_type: str, params: dict[str, Any
     if operation_type == "drop_duplicates":
         return df.drop_duplicates().copy()
 
+    if operation_type == "impute_missing":
+        column = str(params.get("column", ""))
+        if column not in df.columns:
+            raise ValueError(f"Column not found: {column}")
+
+        method = str(params.get("method", "")).strip()
+        allowed_methods = {
+            "mean",
+            "median",
+            "mode",
+            "constant",
+            "forward_fill",
+            "backward_fill",
+            "interpolate",
+        }
+        if method not in allowed_methods:
+            raise ValueError(f"Unsupported imputation method: {method}")
+
+        series = df[column]
+        missing_before = int(series.isna().sum())
+        if missing_before == 0:
+            raise ValueError(f"Column has no missing values: {column}")
+
+        if method in {"mean", "median", "interpolate"} and not pd.api.types.is_numeric_dtype(series):
+            raise ValueError(f"{method.replace('_', ' ').title()} imputation requires a numeric column")
+
+        if method == "mean":
+            filled = series.fillna(series.mean())
+        elif method == "median":
+            filled = series.fillna(series.median())
+        elif method == "mode":
+            modes = series.mode(dropna=True)
+            if modes.empty:
+                raise ValueError("Mode imputation requires at least one non-missing value")
+            filled = series.fillna(modes.iloc[0])
+        elif method == "constant":
+            if "value" not in params:
+                raise ValueError("Constant imputation requires a replacement value")
+            filled = series.fillna(parse_scalar(str(params["value"])))
+        elif method == "forward_fill":
+            filled = series.ffill()
+        elif method == "backward_fill":
+            filled = series.bfill()
+        else:
+            filled = series.interpolate(method="linear")
+
+        if int(filled.isna().sum()) >= missing_before:
+            raise ValueError(f"{method.replace('_', ' ').title()} imputation could not fill any values")
+
+        new_df = df.copy()
+        new_df[column] = filled
+        return new_df
+
     raise ValueError(f"Unsupported operation: {operation_type}")
 
 
@@ -82,4 +135,7 @@ def operation_label(operation_type: str, params: dict[str, Any]) -> str:
         return f"Drop missing: {params.get('column', '')}"
     if operation_type == "drop_duplicates":
         return "Drop duplicate rows"
+    if operation_type == "impute_missing":
+        method = str(params.get("method", "")).replace("_", " ").title()
+        return f"Impute {params.get('column', '')}: {method}"
     return operation_type.replace("_", " ").title()

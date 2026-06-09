@@ -10,6 +10,8 @@ export default function ColumnDetails({ stats, column, onApply }) {
   const [oldValue, setOldValue] = useState('');
   const [newValue, setNewValue] = useState('');
   const [multiple, setMultiple] = useState(false);
+  const [imputationMethod, setImputationMethod] = useState('mean');
+  const [imputationValue, setImputationValue] = useState('');
 
   if (!column || !stats) {
     return <aside className="details-panel empty"><p>Select a column to see stats, operations, and plot options.</p></aside>;
@@ -61,6 +63,29 @@ export default function ColumnDetails({ stats, column, onApply }) {
           <input placeholder="New value" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
           <label className="check"><input type="checkbox" checked={multiple} onChange={(e) => setMultiple(e.target.checked)}/> comma-separated multiple replace</label>
           <button className="ghost-btn" onClick={() => onApply('replace_values', { column, old_value: oldValue, new_value: newValue, multiple })}>Replace</button>
+        </div>
+        <div className="stack separated">
+          <label>Impute missing values</label>
+          <select value={imputationMethod} onChange={(event) => setImputationMethod(event.target.value)}>
+            {stats.kind === 'numeric' && <option value="mean">Mean</option>}
+            {stats.kind === 'numeric' && <option value="median">Median</option>}
+            <option value="mode">Mode (most frequent)</option>
+            <option value="constant">Constant value</option>
+            <option value="forward_fill">Forward fill</option>
+            <option value="backward_fill">Backward fill</option>
+            {stats.kind === 'numeric' && <option value="interpolate">Linear interpolation</option>}
+          </select>
+          {imputationMethod === 'constant' && (
+            <input placeholder="Replacement value" value={imputationValue} onChange={(event) => setImputationValue(event.target.value)} />
+          )}
+          <small className="muted">Current missing values: {stats.missing.toLocaleString()}</small>
+          <button
+            className="ghost-btn"
+            disabled={!stats.missing}
+            onClick={() => onApply('impute_missing', { column, method: imputationMethod, value: imputationValue })}
+          >
+            <Wand2 size={15}/> Impute missing values
+          </button>
         </div>
       </details>
     </aside>

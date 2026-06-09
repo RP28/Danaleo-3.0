@@ -208,6 +208,27 @@ def test_export_replays_drop_duplicates_operation():
     assert "df = df.drop_duplicates().copy()" in combined_sources
 
 
+def test_export_replays_imputation_operations():
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(b"value,label\n1,A\n,B\n3,\n", "missing.csv")
+    session_id = workspace_store.active_session_id
+    workspace_store.apply_session_operation(
+        session_id,
+        "impute_missing",
+        {"column": "value", "method": "median"},
+    )
+    workspace_store.apply_session_operation(
+        session_id,
+        "impute_missing",
+        {"column": "label", "method": "constant", "value": "Unknown"},
+    )
+
+    combined_sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "df['value'] = df['value'].fillna(df['value'].median())" in combined_sources
+    assert "df['label'] = df['label'].fillna('Unknown')" in combined_sources
+
+
 def test_export_keeps_dataset_level_plot_markdown_minimal(csv_bytes: bytes):
     workspace_store = WorkspaceStore()
     workspace_store.load_csv(csv_bytes, "customers.csv")

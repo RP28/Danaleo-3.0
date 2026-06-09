@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, Controls, Handle, Position } from '@xyflow/react';
-import { Check, GitBranch, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, Database, GitBranch, GitMerge, Pencil, Plus, Trash2, X } from 'lucide-react';
 
 const NODE_Y_GAP = 98;
 const TIMELINE_X_GAP = 178;
@@ -422,6 +422,7 @@ function SessionStartNode({ data }) {
 const nodeTypes = { sessionNode: SessionNode, sessionStartNode: SessionStartNode };
 
 export default function SessionTree({ workspace, onActivate, onCreate, onRename, onDelete }) {
+  const provenance = workspace.datasets.find((dataset) => dataset.id === workspace.active_dataset_id)?.provenance;
   const { nodes, edges } = useMemo(() => {
     const { byId, childrenByParent } = buildSessionHierarchy(workspace.sessions);
     const timelineIndex = buildTimelineIndex(workspace.sessions);
@@ -528,6 +529,13 @@ export default function SessionTree({ workspace, onActivate, onCreate, onRename,
           <p className="section-label">Session tree</p>
         </div>
       </div>
+      {provenance?.type === 'merge' && (
+        <div className="tree-merge-lineage">
+          <span><Database size={13} /><strong>{provenance.left_dataset_name}</strong> · {provenance.left_session_name}</span>
+          <span className="tree-merge-kind"><GitMerge size={14} /> {provenance.how === 'outer' ? 'full outer' : provenance.how} merge</span>
+          <span><Database size={13} /><strong>{provenance.right_dataset_name}</strong> · {provenance.right_session_name}</span>
+        </div>
+      )}
       <div id="session-tree-canvas" className="tree-canvas" data-testid="session-tree-canvas">
           <ReactFlow
             nodes={nodes}
