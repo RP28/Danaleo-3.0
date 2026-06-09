@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from danaleo.core.exporter import export_notebook
+from danaleo.core.exporter import export_notebooks_payload
 from danaleo.core.session_store import store
 from danaleo.core.stats import column_stats
 from danaleo.server.models import (
@@ -284,13 +284,14 @@ def delete_plot(plot_id: str) -> dict:
 @app.get("/api/export/notebook")
 def export() -> Response:
     try:
-        data = export_notebook(store)
-        filename = (store.csv_name or "danaleo_export.csv").rsplit(".", 1)[0] + "_eda.ipynb"
+        data, filename, media_type = export_notebooks_payload(store)
+
         return Response(
             data,
-            media_type="application/x-ipynb+json",
+            media_type=media_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

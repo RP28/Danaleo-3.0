@@ -82,15 +82,28 @@ export const api = {
   exportNotebook: async () => {
     const res = await request('/api/export/notebook');
     const blob = await res.blob();
+
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
+
     a.href = url;
+
     const disposition = res.headers.get('content-disposition') || '';
-    const match = disposition.match(/filename="(.+)"/);
-    a.download = match?.[1] || 'danaleo_eda.ipynb';
+    const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/);
+
+    const headerFilename = match?.[1] || match?.[2];
+    const fallbackFilename = blob.type.includes('zip')
+      ? 'danaleo_eda_notebooks.zip'
+      : 'danaleo_eda.ipynb';
+
+    a.download = headerFilename
+      ? decodeURIComponent(headerFilename)
+      : fallbackFilename;
+
     document.body.appendChild(a);
     a.click();
     a.remove();
+
     window.URL.revokeObjectURL(url);
   }
 };

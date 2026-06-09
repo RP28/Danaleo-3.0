@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections import Counter
 import re
-from io import StringIO
+from io import BytesIO, StringIO
+from zipfile import ZIP_DEFLATED, ZipFile
 from pathlib import Path
 from typing import Any
 
@@ -90,13 +91,15 @@ def _operation_code(df_var: str, operation_type: str, params: dict[str, Any]) ->
     return f"# Operation not exported yet: {operation_type}"
 
 
-def _session_creation_code(session, var_by_session: dict[str, str], store: WorkspaceStore) -> str:
+def _session_creation_code(session, var_by_session: dict[str, str], dataset) -> str:
     df_var = var_by_session[session.id]
+
     if not session.parent_id:
         return ""
 
-    parent = store.sessions[session.parent_id]
+    parent = dataset.sessions[session.parent_id]
     parent_var = var_by_session[parent.id]
+
     return f"{df_var} = {parent_var}.copy()"
 
 
@@ -141,10 +144,10 @@ def _load_dataset_code(dataset, df_var: str) -> list[str]:
 
 def _merge_code(output_var: str, left_var: str, right_var: str, provenance: dict[str, Any]) -> str:
     arguments = [
-        left_var,
         right_var,
         f"how={provenance['how']!r}",
     ]
+
     if provenance["how"] != "cross":
         arguments.extend(
             [
@@ -152,10 +155,15 @@ def _merge_code(output_var: str, left_var: str, right_var: str, provenance: dict
                 f"right_on={provenance.get('right_on', [])!r}",
             ]
         )
+
     arguments.append(f"suffixes={tuple(provenance.get('suffixes') or ['_left', '_right'])!r}")
+
     if provenance.get("validate"):
         arguments.append(f"validate={provenance['validate']!r}")
-    return f"{output_var} = pd.merge({', '.join(arguments)})"
+
+    joined_arguments = ",\n    ".join(arguments)
+
+    return f"{output_var} = {left_var}.merge(\n    {joined_arguments}\n)"
 
 
 def _dataset_base_code(
@@ -230,14 +238,74 @@ def _append_code_steps(cells: list[Any], steps: list[str]) -> None:
             cells.append(nbf.v4.new_code_cell(step))
 
 
-def export_notebook(store: WorkspaceStore) -> bytes:
+def _safe_file_stem(name: str | None, fallback: str = "dataset") -> str:
+    raw = Path(name or fallback).stem
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-")
+    return cleaned or fallback
+
+
+def _notebook_filename(dataset, used: set[str]) -> str:
+    base = _safe_file_stem(dataset.csv_name, "dataset")
+
+    if dataset.provenance and dataset.provenance.get("type") == "merge":
+        if not base.lower().endswith("_merged"):
+            base = f"{base}_merged"
+
+    candidate = f"{base}_eda.ipynb"
+    index = 2
+
+    while candidate in used:
+        candidate = f"{base}_eda_{index}.ipynb"
+        index += 1
+
+    used.add(candidate)
+    return candidate
+
+
+def _notebook_bytes(nb) -> bytes:
+    output = StringIO()
+    nbf.write(nb, output)
+    return output.getvalue().encode("utf-8")
+
+
+def _resolve_export_dataset(store: WorkspaceStore, dataset_id: str | None = None):
     if not store.ready:
         raise ValueError("Nothing to export yet")
 
+    if dataset_id is None:
+        dataset = store.active_dataset
+    else:
+        dataset = store.datasets.get(dataset_id)
+
+    if not dataset:
+        raise ValueError("Dataset not found")
+
+    return dataset
+
+
+def _datasets_for_export(store: WorkspaceStore) -> list[Any]:
+    if not store.ready:
+        raise ValueError("Nothing to export yet")
+
+    return sorted(
+        store.datasets.values(),
+        key=lambda dataset: (_dataset_root(dataset).created_time, dataset.csv_name.lower()),
+    )
+
+
+def _build_dataset_notebook(store: WorkspaceStore, dataset) -> bytes:
     nb = nbf.v4.new_notebook()
     cells: list[Any] = []
 
-    cells.append(nbf.v4.new_markdown_cell(f"# Danaleo EDA Export: {store.csv_name or 'dataset'}"))
+    provenance = dataset.provenance or {}
+    is_merge = provenance.get("type") == "merge"
+
+    title = f"# Danaleo EDA Export: {dataset.csv_name or 'dataset'}"
+    if is_merge:
+        title += "\n\nThis dataset is rebuilt from its source datasets using dataframe `.merge(...)` code."
+
+    cells.append(nbf.v4.new_markdown_cell(title))
+
     cells.append(
         nbf.v4.new_code_cell(
             "import pandas as pd\n"
@@ -247,51 +315,51 @@ def export_notebook(store: WorkspaceStore) -> bytes:
         )
     )
 
-    active_dataset = store.active_dataset
-    rebuild_merge = bool(
-        active_dataset
-        and active_dataset.provenance
-        and active_dataset.provenance.get("type") == "merge"
-        and _merge_chain_available(store, active_dataset)
-    )
     allocator = _VariableAllocator()
-    if rebuild_merge:
-        load_lines = _dataset_base_code(store, active_dataset, "df", allocator)
-    else:
-        load_lines = _load_dataset_code(active_dataset, "df")
+
+    load_lines = _dataset_base_code(store, dataset, "df", allocator)
     _append_code_steps(cells, load_lines)
+
     cells.append(nbf.v4.new_code_cell("df.head()"))
 
-    sessions = sorted(store.sessions.values(), key=lambda s: s.created_time)
+    sessions = sorted(dataset.sessions.values(), key=lambda s: s.created_time)
     var_by_session = _unique_var_names(sessions)
     allocator.reserve(*var_by_session.values())
 
     events: list[tuple[int, int, str, Any, Any]] = []
+
     for session in sessions:
         events.append((session.created_time, 0, "session", session, None))
+
         for op in session.operations:
             if op.operation_type == "created_session":
                 continue
+
             events.append((op.time, 1, "operation", session, op))
 
     for _, _, event_type, session, op in sorted(events, key=lambda item: (item[0], item[1])):
         df_var = var_by_session[session.id]
+
         if event_type == "session":
             if session.parent_id:
                 cells.append(nbf.v4.new_markdown_cell(f"## Session: {session.name}"))
-                cells.append(nbf.v4.new_code_cell(_session_creation_code(session, var_by_session, store)))
-        else:
+                creation_code = _session_creation_code(session, var_by_session, dataset)
+
+                if creation_code.strip():
+                    cells.append(nbf.v4.new_code_cell(creation_code))
+
+        elif op is not None:
             cells.append(nbf.v4.new_code_cell(_operation_code(df_var, op.operation_type, op.params)))
 
     export_plots = sorted(
         (
             plot
-            for dataset in store.datasets.values()
             for plot in dataset.saved_plots.values()
             if plot.include_in_export
         ),
         key=lambda plot: plot.created_time,
     )
+
     plot_var_by_session = dict(var_by_session)
 
     for plot in export_plots:
@@ -300,6 +368,7 @@ def export_notebook(store: WorkspaceStore) -> bytes:
             plot_var = allocator.new(
                 f"{Path(plot_dataset.csv_name).stem}_{plot_session.name}_plot"
             )
+
             snapshot_code = _session_snapshot_code(
                 store,
                 plot_dataset,
@@ -308,11 +377,15 @@ def export_notebook(store: WorkspaceStore) -> bytes:
                 store.time_counter,
                 allocator,
             )
+
             _append_code_steps(cells, snapshot_code)
             plot_var_by_session[plot.session_id] = plot_var
+
         cells.append(nbf.v4.new_markdown_cell(f"## {plot.title}"))
+
         if plot.remark.strip():
             cells.append(nbf.v4.new_markdown_cell(plot.remark.strip()))
+
         cells.append(
             nbf.v4.new_code_cell(
                 notebook_plot_code(
@@ -326,6 +399,44 @@ def export_notebook(store: WorkspaceStore) -> bytes:
         )
 
     nb.cells = cells
-    output = StringIO()
-    nbf.write(nb, output)
-    return output.getvalue().encode("utf-8")
+    return _notebook_bytes(nb)
+
+
+def export_notebook(store: WorkspaceStore, dataset_id: str | None = None) -> bytes:
+    dataset = _resolve_export_dataset(store, dataset_id)
+    return _build_dataset_notebook(store, dataset)
+
+
+def export_notebooks_zip(store: WorkspaceStore) -> bytes:
+    datasets = _datasets_for_export(store)
+
+    buffer = BytesIO()
+    used_names: set[str] = set()
+
+    with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
+        for dataset in datasets:
+            filename = _notebook_filename(dataset, used_names)
+            archive.writestr(filename, _build_dataset_notebook(store, dataset))
+
+    return buffer.getvalue()
+
+
+def export_notebooks_payload(store: WorkspaceStore) -> tuple[bytes, str, str]:
+    datasets = _datasets_for_export(store)
+
+    if len(datasets) == 1:
+        used_names: set[str] = set()
+        dataset = datasets[0]
+        filename = _notebook_filename(dataset, used_names)
+
+        return (
+            _build_dataset_notebook(store, dataset),
+            filename,
+            "application/x-ipynb+json",
+        )
+
+    return (
+        export_notebooks_zip(store),
+        "danaleo_eda_notebooks.zip",
+        "application/zip",
+    )
