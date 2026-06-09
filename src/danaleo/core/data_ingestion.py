@@ -3,14 +3,18 @@ from __future__ import annotations
 import bz2
 import csv
 import gzip
+import json
 import lzma
 import re
 from collections import Counter
+from datetime import date, datetime
+from decimal import Decimal
 from io import StringIO
 from pathlib import Path
 from typing import Any
 from zipfile import ZipFile
 
+import numpy as np
 import pandas as pd
 
 
@@ -51,10 +55,15 @@ for compression_suffix in (".gz", ".bz2", ".xz", ".zip"):
         (".ndjson", "jsonl"),
     ]:
         FORMAT_BY_SUFFIX[f"{data_suffix}{compression_suffix}"] = format_name
+for compression_suffix in (".gz", ".bz2", ".xz"):
+    FORMAT_BY_SUFFIX[f".dta{compression_suffix}"] = "stata"
+    FORMAT_BY_SUFFIX[f".sas7bdat{compression_suffix}"] = "sas"
+    FORMAT_BY_SUFFIX[f".xpt{compression_suffix}"] = "sas"
 
 SUPPORTED_DATA_EXTENSIONS = tuple(FORMAT_BY_SUFFIX)
 COMMON_DELIMITERS = [",", ";", "\t", "|"]
 SEP_DIRECTIVE = re.compile(r"^\s*sep=(.)\s*$", re.IGNORECASE)
+JSON_RECORD_KEYS = ("data", "records", "items", "results", "rows", "values")
 
 
 def _decompress_for_detection(path: str, raw: bytes) -> bytes:
@@ -96,6 +105,10 @@ def _decode_delimited_text(raw: bytes) -> tuple[str, str]:
             return text, encoding
 
     raise ValueError("Could not decode the data file using common text encodings")
+
+
+def _read_source_bytes(path: str) -> bytes:
+    return _decompress_for_detection(path, Path(path).read_bytes())
 
 
 def _separator_directive(text: str) -> tuple[str | None, int]:
@@ -173,7 +186,7 @@ def _read_delimited_file(
     path: str,
     parse_info: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    raw = _decompress_for_detection(path, Path(path).read_bytes())
+    raw = _read_source_bytes(path)
     options = dict(parse_info or _detect_delimited_options(raw))
     delimiter = str(options.get("delimiter") or ",")
     encoding = str(options.get("encoding") or "utf-8")
@@ -199,6 +212,47 @@ def _matching_suffix(filename: str) -> str | None:
     )
 
 
+def _detected_source_format(path: str, filename: str) -> str:
+    declared = source_format(filename)
+    with open(path, "rb") as source:
+        head = source.read(8)
+        source.seek(0, 2)
+        size = source.tell()
+        source.seek(max(0, size - 8))
+        tail = source.read(8)
+    if head.startswith(b"PAR1") and tail.endswith(b"PAR1"):
+        return "parquet"
+    if head.startswith(b"ARROW1"):
+        return "feather"
+    if head.startswith(b"ORC"):
+        return "orc"
+    if head.startswith(b"\x89HDF"):
+        return "hdf"
+    if head.startswith(b"PK"):
+        try:
+            with ZipFile(path) as archive:
+                names = set(archive.namelist())
+            if "xl/workbook.xml" in names or "content.xml" in names:
+                return "excel"
+        except Exception:
+            return declared
+    if declared == "delimited":
+        try:
+            text, _ = _decode_delimited_text(_read_source_bytes(path))
+            stripped = text.lstrip()
+            if stripped.startswith(("{", "[")):
+                try:
+                    json.loads(stripped)
+                    return "json"
+                except json.JSONDecodeError:
+                    records = [json.loads(line) for line in text.splitlines() if line.strip()]
+                    if records:
+                        return "jsonl"
+        except Exception:
+            pass
+    return declared
+
+
 def source_format(filename: str) -> str:
     suffix = _matching_suffix(filename)
     if suffix is None:
@@ -211,26 +265,19 @@ def is_supported_data_filename(filename: str | None) -> bool:
     return bool(filename and _matching_suffix(filename))
 
 
-def _first_excel_sheet(path: str) -> str:
-    workbook = pd.ExcelFile(path)
-    if not workbook.sheet_names:
-        raise ValueError("The spreadsheet does not contain any sheets")
-    return str(workbook.sheet_names[0])
-
-
-def _first_hdf_key(path: str) -> str:
+def _hdf_keys(path: str) -> list[str]:
     with pd.HDFStore(path, mode="r") as store:
         keys = store.keys()
     if not keys:
         raise ValueError("The HDF file does not contain any tables")
-    return str(keys[0])
+    return [str(key) for key in keys]
 
 
 def _unique_column_names(columns) -> list[str]:
     names: list[str] = []
     used: set[str] = set()
     for index, column in enumerate(columns):
-        base = str(column).strip() or f"Unnamed: {index}"
+        base = str(_decode_bytes(column)).strip() or f"Unnamed: {index}"
         name = base
         suffix = 1
         while name in used:
@@ -241,6 +288,70 @@ def _unique_column_names(columns) -> list[str]:
     return names
 
 
+def _decode_bytes(value: Any) -> Any:
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    if not isinstance(value, (bytes, bytearray)):
+        return value
+    for encoding in ("utf-8", "cp1252", "latin-1"):
+        try:
+            return bytes(value).decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return bytes(value).hex()
+
+
+def _safe_cell(value: Any) -> Any:
+    value = _decode_bytes(value)
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, ensure_ascii=False, default=str, sort_keys=isinstance(value, dict))
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (str, int, float, bool, date, datetime, pd.Timestamp, pd.Timedelta)):
+        return value
+    return str(value)
+
+
+def _clean_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str] | None]:
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("The selected data does not contain a table")
+    df.columns = _unique_column_names(df.columns)
+    default_index = df.index.name is None and df.index.equals(pd.RangeIndex(len(df)))
+    index_names: list[str] | None = None
+    if not default_index:
+        used = {str(column) for column in df.columns}
+        if isinstance(df.index, pd.MultiIndex):
+            raw_names = [
+                str(name).strip() if name is not None and str(name).strip() else f"index_{position}"
+                for position, name in enumerate(df.index.names)
+            ]
+        else:
+            raw_names = [str(df.index.name).strip() if df.index.name is not None else "index"]
+        index_names = []
+        for raw_name in raw_names:
+            name = raw_name
+            suffix = 1
+            while name in used:
+                name = f"{raw_name}.{suffix}"
+                suffix += 1
+            used.add(name)
+            index_names.append(name)
+        df.index.names = index_names
+        df = df.reset_index()
+    df = df.dropna(axis=0, how="all").dropna(axis=1, how="all").reset_index(drop=True)
+    for column in df.columns:
+        series = df[column]
+        if series.dtype == "object":
+            df[column] = series.map(_safe_cell, na_action="ignore")
+    if len(df.columns) == 0:
+        raise ValueError("The selected data table does not contain any columns")
+    return df, index_names
+
+
 def _finalize(
     df: pd.DataFrame,
     format_name: str,
@@ -248,12 +359,209 @@ def _finalize(
     expected_columns: list[str] | None = None,
 ) -> tuple[pd.DataFrame, str, dict[str, Any]]:
     original_columns = list(df.columns)
-    columns = expected_columns if expected_columns and len(expected_columns) == len(df.columns) else _unique_column_names(df.columns)
+    df, index_names = _clean_dataframe(df)
+    columns = expected_columns if expected_columns and len(expected_columns) == len(df.columns) else list(df.columns)
     df.columns = columns
     finalized_parse_info = dict(parse_info)
     if expected_columns or columns != original_columns:
         finalized_parse_info["column_names"] = columns
+    if index_names:
+        finalized_parse_info["index_names"] = index_names
     return df, format_name, finalized_parse_info
+
+
+def _json_to_dataframe(payload: Any) -> tuple[pd.DataFrame, str | None, str]:
+    if isinstance(payload, list):
+        if not payload:
+            raise ValueError("The JSON array is empty")
+        if not any(isinstance(item, (dict, list)) for item in payload):
+            return pd.DataFrame({"value": payload}), None, "value_list"
+        return pd.json_normalize(payload), None, "normalize"
+
+    if isinstance(payload, dict):
+        if (
+            isinstance(payload.get("columns"), list)
+            and isinstance(payload.get("data"), list)
+            and all(isinstance(row, list) for row in payload["data"])
+        ):
+            frame = pd.DataFrame(
+                payload["data"],
+                columns=payload["columns"],
+                index=payload.get("index"),
+            )
+            return frame, None, "split"
+
+        for key in JSON_RECORD_KEYS:
+            value = payload.get(key)
+            if isinstance(value, list):
+                if not value:
+                    continue
+                return pd.json_normalize(value), key, "normalize"
+
+        if payload and all(isinstance(value, list) for value in payload.values()):
+            lengths = {len(value) for value in payload.values()}
+            if len(lengths) == 1:
+                return pd.DataFrame(payload), None, "columns"
+
+        list_candidates = [
+            (key, value)
+            for key, value in payload.items()
+            if isinstance(value, list) and value
+        ]
+        if len(list_candidates) == 1:
+            key, value = list_candidates[0]
+            return pd.json_normalize(value), str(key), "normalize"
+
+        if payload and all(isinstance(value, dict) for value in payload.values()):
+            return (
+                pd.DataFrame.from_dict(payload, orient="index").reset_index(names="index"),
+                None,
+                "dict_index",
+            )
+        return pd.json_normalize(payload), None, "normalize"
+
+    raise ValueError("JSON must contain an object, an array of records, or JSON Lines")
+
+
+def _read_json_file(
+    path: str,
+    format_name: str,
+    options: dict[str, Any],
+    restoring: bool,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    text, encoding = _decode_delimited_text(_read_source_bytes(path))
+    lines = bool(options.get("lines", format_name == "jsonl"))
+    record_path = options.get("record_path")
+
+    if lines:
+        records = [
+            json.loads(line)
+            for line in text.splitlines()
+            if line.strip()
+        ]
+        return pd.json_normalize(records), {
+            "lines": True,
+            "encoding": encoding,
+            "json_mode": "normalize",
+        }
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        if restoring:
+            raise
+        records = [json.loads(line) for line in text.splitlines() if line.strip()]
+        return pd.json_normalize(records), {
+            "lines": True,
+            "encoding": encoding,
+            "json_mode": "normalize",
+        }
+
+    if record_path is not None:
+        if not isinstance(payload, dict) or record_path not in payload:
+            raise ValueError(f"JSON record path not found: {record_path}")
+        df = pd.json_normalize(payload[record_path])
+        return df, {
+            "lines": False,
+            "encoding": encoding,
+            "record_path": record_path,
+            "json_mode": str(options.get("json_mode") or "normalize"),
+        }
+
+    df, detected_record_path, json_mode = _json_to_dataframe(payload)
+    parse_info: dict[str, Any] = {
+        "lines": False,
+        "encoding": encoding,
+        "json_mode": json_mode,
+    }
+    if detected_record_path is not None:
+        parse_info["record_path"] = detected_record_path
+    return df, parse_info
+
+
+def _excel_header_score(frame: pd.DataFrame, row_index: int) -> tuple[int, int, int, int]:
+    values = [value for value in frame.iloc[row_index].tolist() if pd.notna(value)]
+    if not values:
+        return (0, 0, 0, -row_index)
+    names = [str(value).strip() for value in values]
+    unique = len(set(names))
+    text_values = sum(isinstance(value, str) for value in values)
+    return (text_values, -row_index, unique, len(values))
+
+
+def _read_excel_file(
+    path: str,
+    options: dict[str, Any],
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    workbook = pd.ExcelFile(path)
+    if not workbook.sheet_names:
+        raise ValueError("The spreadsheet does not contain any sheets")
+
+    if options.get("sheet_name") is not None:
+        sheet_names = [options["sheet_name"]]
+    else:
+        sheet_names = workbook.sheet_names
+
+    candidates: list[tuple[int, int, str, int, pd.DataFrame]] = []
+    for sheet_name in sheet_names:
+        try:
+            raw = pd.read_excel(path, sheet_name=sheet_name, header=None, nrows=40)
+        except Exception:
+            if options.get("sheet_name") is not None:
+                raise
+            continue
+        raw = raw.dropna(axis=1, how="all")
+        non_empty_rows = [index for index in range(len(raw)) if raw.iloc[index].notna().any()]
+        if not non_empty_rows:
+            continue
+        if options.get("header_row") is not None:
+            header_row = int(options["header_row"])
+        else:
+            max_width = max(int(raw.iloc[index].notna().sum()) for index in non_empty_rows)
+            minimum_width = min(max_width, max(2, (max_width + 1) // 2))
+            plausible_rows = [
+                index
+                for index in non_empty_rows
+                if int(raw.iloc[index].notna().sum()) >= minimum_width
+            ]
+            header_row = max(plausible_rows, key=lambda index: _excel_header_score(raw, index))
+        try:
+            frame = pd.read_excel(path, sheet_name=sheet_name, header=header_row)
+        except Exception:
+            if options.get("sheet_name") is not None:
+                raise
+            continue
+        frame = frame.dropna(axis=0, how="all").dropna(axis=1, how="all")
+        if frame.empty or len(frame.columns) == 0:
+            continue
+        candidates.append((len(frame), len(frame.columns), str(sheet_name), header_row, frame))
+
+    if not candidates:
+        raise ValueError("The spreadsheet does not contain a non-empty table")
+    _, _, sheet_name, header_row, df = max(candidates, key=lambda item: (item[0], item[1]))
+    return df, {"sheet_name": sheet_name, "header_row": header_row}
+
+
+def _read_hdf_file(path: str, options: dict[str, Any]) -> tuple[pd.DataFrame, dict[str, Any]]:
+    if options.get("key"):
+        key = str(options["key"])
+        return pd.read_hdf(path, key=key), {"key": key}
+
+    candidates: list[tuple[int, int, str, pd.DataFrame]] = []
+    for key in _hdf_keys(path):
+        try:
+            value = pd.read_hdf(path, key=key)
+        except Exception:
+            continue
+        if isinstance(value, pd.DataFrame):
+            candidates.append((len(value), len(value.columns), key, value))
+        elif isinstance(value, pd.Series):
+            frame = value.to_frame()
+            candidates.append((len(frame), len(frame.columns), key, frame))
+    if not candidates:
+        raise ValueError("The HDF file does not contain a readable table")
+    _, _, key, df = max(candidates, key=lambda item: (item[0], item[1]))
+    return df, {"key": key}
 
 
 def read_data_file(
@@ -261,7 +569,7 @@ def read_data_file(
     filename: str,
     parse_info: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, str, dict[str, Any]]:
-    format_name = source_format(filename)
+    format_name = _detected_source_format(path, filename)
     options = dict(parse_info or {})
 
     try:
@@ -270,22 +578,12 @@ def read_data_file(
             return _finalize(df, format_name, detected, options.get("column_names"))
 
         if format_name in {"json", "jsonl"}:
-            lines = bool(options.get("lines", format_name == "jsonl"))
-            try:
-                df = pd.read_json(path, lines=lines)
-            except ValueError:
-                if parse_info or format_name == "jsonl":
-                    raise
-                lines = True
-                df = pd.read_json(path, lines=True)
-            return _finalize(df, format_name, {"lines": lines}, options.get("column_names"))
+            df, detected = _read_json_file(path, format_name, options, parse_info is not None)
+            return _finalize(df, format_name, detected, options.get("column_names"))
 
         if format_name == "excel":
-            sheet_name = options.get("sheet_name")
-            if sheet_name is None:
-                sheet_name = _first_excel_sheet(path)
-            df = pd.read_excel(path, sheet_name=sheet_name)
-            return _finalize(df, format_name, {"sheet_name": sheet_name}, options.get("column_names"))
+            df, detected = _read_excel_file(path, options)
+            return _finalize(df, format_name, detected, options.get("column_names"))
 
         if format_name == "parquet":
             return _finalize(pd.read_parquet(path), format_name, {}, options.get("column_names"))
@@ -296,15 +594,13 @@ def read_data_file(
         if format_name == "stata":
             return _finalize(pd.read_stata(path), format_name, {}, options.get("column_names"))
         if format_name == "sas":
-            return _finalize(pd.read_sas(path), format_name, {}, options.get("column_names"))
+            encoding = options.get("encoding")
+            df = pd.read_sas(path, encoding=encoding)
+            detected = {"encoding": encoding} if encoding else {}
+            return _finalize(df, format_name, detected, options.get("column_names"))
         if format_name == "hdf":
-            key = str(options.get("key") or _first_hdf_key(path))
-            return _finalize(
-                pd.read_hdf(path, key=key),
-                format_name,
-                {"key": key},
-                options.get("column_names"),
-            )
+            df, detected = _read_hdf_file(path, options)
+            return _finalize(df, format_name, detected, options.get("column_names"))
     except ImportError as exc:
         raise ValueError(
             f"Reading {Path(filename).suffix} files requires its data-format dependency"
@@ -334,9 +630,30 @@ def notebook_read_expression(
         return f"{variable} = pd.read_csv({filename!r}{extra})"
     if format_name in {"json", "jsonl"}:
         lines = bool(options.get("lines", format_name == "jsonl"))
-        return f"{variable} = pd.read_json({filename!r}, lines={lines!r})"
+        encoding = str(options.get("encoding") or "utf-8")
+        if lines:
+            return f"{variable} = pd.read_json({filename!r}, lines=True, encoding={encoding!r})"
+        payload = _notebook_json_payload(filename, encoding)
+        if options.get("record_path") is not None:
+            payload += f"[{options['record_path']!r}]"
+        if options.get("json_mode") == "dict_index":
+            return f"{variable} = pd.DataFrame.from_dict({payload}, orient='index').reset_index(names='index')"
+        if options.get("json_mode") == "value_list":
+            return f"{variable} = pd.DataFrame({{'value': {payload}}})"
+        if options.get("json_mode") == "columns":
+            return f"{variable} = pd.DataFrame({payload})"
+        if options.get("json_mode") == "split":
+            return (
+                f"{variable}_payload = {payload}\n"
+                f"{variable} = pd.DataFrame({variable}_payload['data'], "
+                f"columns={variable}_payload['columns'], index={variable}_payload.get('index'))"
+            )
+        return f"{variable} = pd.json_normalize({payload})"
     if format_name == "excel":
-        return f"{variable} = pd.read_excel({filename!r}, sheet_name={options.get('sheet_name')!r})"
+        return (
+            f"{variable} = pd.read_excel({filename!r}, "
+            f"sheet_name={options.get('sheet_name')!r}, header={options.get('header_row', 0)!r})"
+        )
     if format_name == "parquet":
         return f"{variable} = pd.read_parquet({filename!r})"
     if format_name == "feather":
@@ -346,7 +663,28 @@ def notebook_read_expression(
     if format_name == "stata":
         return f"{variable} = pd.read_stata({filename!r})"
     if format_name == "sas":
-        return f"{variable} = pd.read_sas({filename!r})"
+        encoding = options.get("encoding")
+        suffix = f", encoding={encoding!r}" if encoding else ""
+        return f"{variable} = pd.read_sas({filename!r}{suffix})"
     if format_name == "hdf":
         return f"{variable} = pd.read_hdf({filename!r}, key={options.get('key')!r})"
     raise ValueError(f"Unsupported data format: {format_name}")
+
+
+def _notebook_json_payload(filename: str, encoding: str) -> str:
+    lower_name = filename.lower()
+    if lower_name.endswith(".gz"):
+        stream = f"__import__('gzip').open({filename!r}, 'rt', encoding={encoding!r})"
+        return f"__import__('json').load({stream})"
+    if lower_name.endswith(".bz2"):
+        stream = f"__import__('bz2').open({filename!r}, 'rt', encoding={encoding!r})"
+        return f"__import__('json').load({stream})"
+    if lower_name.endswith(".xz"):
+        stream = f"__import__('lzma').open({filename!r}, 'rt', encoding={encoding!r})"
+        return f"__import__('json').load({stream})"
+    if lower_name.endswith(".zip"):
+        archive = f"__import__('zipfile').ZipFile({filename!r})"
+        raw = f"{archive}.read({archive}.namelist()[0]).decode({encoding!r})"
+        return f"__import__('json').loads({raw})"
+    stream = f"open({filename!r}, encoding={encoding!r})"
+    return f"__import__('json').load({stream})"

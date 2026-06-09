@@ -155,6 +155,9 @@ def _load_dataset_code(dataset, df_var: str) -> list[str]:
             dataset.parse_info,
         )
     ]
+    if dataset.parse_info and dataset.parse_info.get("index_names"):
+        code[0] += f"\n{df_var}.index.names = {dataset.parse_info['index_names']!r}"
+        code[0] += f"\n{df_var} = {df_var}.reset_index()"
     if dataset.parse_info and dataset.parse_info.get("column_names"):
         code[0] += f"\n{df_var}.columns = {dataset.parse_info['column_names']!r}"
     info = dataset.sample_info
