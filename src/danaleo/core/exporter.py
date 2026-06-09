@@ -76,11 +76,29 @@ def _operation_code(df_var: str, operation_type: str, params: dict[str, Any]) ->
         col = params.get("column", "")
         if params.get("multiple", False):
             old_value = [parse_scalar(value) for value in str(params.get("old_value", "")).split(",")]
-            new_value = [parse_scalar(value) for value in str(params.get("new_value", "")).split(",")]
         else:
             old_value = parse_scalar(str(params.get("old_value", "")))
+        replacement_method = params.get("replacement_method", "constant")
+        if replacement_method == "constant" and params.get("multiple", False):
+            new_value = [parse_scalar(value) for value in str(params.get("new_value", "")).split(",")]
+        elif replacement_method == "constant":
             new_value = parse_scalar(str(params.get("new_value", "")))
-        return f"{df_var}[{col!r}] = {df_var}[{col!r}].replace({_python_literal(old_value)}, {_python_literal(new_value)})"
+        elif replacement_method == "nan":
+            new_value = pd.NA
+        else:
+            target = f"{df_var}[{col!r}]"
+            remaining = f"{target}.replace({_python_literal(old_value)}, pd.NA)"
+            statistic = (
+                f"{remaining}.mode(dropna=True).iloc[0]"
+                if replacement_method == "mode"
+                else f"{remaining}.{replacement_method}()"
+            )
+            new_value = statistic
+            return f"{target} = {target}.replace({_python_literal(old_value)}, {new_value})"
+        return (
+            f"{df_var}[{col!r}] = {df_var}[{col!r}].replace("
+            f"{_python_literal(old_value)}, {_python_literal(new_value)})"
+        )
 
     if operation_type == "drop_missing":
         col = params.get("column", "")
@@ -107,6 +125,35 @@ def _operation_code(df_var: str, operation_type: str, params: dict[str, Any]) ->
             return f"{target} = {target}.bfill()"
         if method == "interpolate":
             return f"{target} = {target}.interpolate(method='linear')"
+
+    if operation_type == "transform_column":
+        col = params.get("column", "")
+        method = params.get("method", "")
+        target = f"{df_var}[{col!r}]"
+        if method == "one_hot":
+            return (
+                f"_encoded = pd.get_dummies({target}, prefix={col!r}, prefix_sep='_', dtype=int)\n"
+                f"{df_var} = pd.concat([{df_var}.drop(columns={[col]!r}), _encoded], axis=1)"
+            )
+        if method == "ordinal":
+            raw_order = str(params.get("order", "")).strip()
+            if raw_order:
+                order = [parse_scalar(value) for value in raw_order.split(",")]
+                order_code = _python_literal(order)
+            else:
+                order_code = (
+                    f"sorted({target}.dropna().unique().tolist(), "
+                    "key=lambda value: (type(value).__name__, str(value)))"
+                )
+            return (
+                f"_ordinal_order = {order_code}\n"
+                f"{target} = {target}.map({{value: index for index, value in "
+                "enumerate(_ordinal_order)}).astype('Int64')"
+            )
+        if method == "min_max":
+            return f"{target} = ({target} - {target}.min()) / ({target}.max() - {target}.min())"
+        if method == "standardize":
+            return f"{target} = ({target} - {target}.mean()) / {target}.std(ddof=0)"
 
     return f"# Operation not exported yet: {operation_type}"
 

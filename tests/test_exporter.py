@@ -206,6 +206,30 @@ def test_export_replacement_with_missing_value_compiles():
     compile(operation_cell, "<replace-missing>", "exec")
 
 
+def test_export_replays_explicit_nan_and_statistical_replacements():
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(b"value,label\n1,bad\n-999,A\n3,A\n", "replace-methods.csv")
+    session_id = workspace_store.active_session_id
+    workspace_store.apply_session_operation(
+        session_id,
+        "replace_values",
+        {"column": "value", "old_value": "-999", "replacement_method": "nan"},
+    )
+    workspace_store.apply_session_operation(
+        session_id,
+        "replace_values",
+        {"column": "label", "old_value": "bad", "replacement_method": "mode"},
+    )
+
+    combined_sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "df['value'] = df['value'].replace(-999, pd.NA)" in combined_sources
+    assert (
+        "df['label'] = df['label'].replace('bad', "
+        "df['label'].replace('bad', pd.NA).mode(dropna=True).iloc[0])"
+    ) in combined_sources
+
+
 def test_export_replays_drop_duplicates_operation():
     workspace_store = WorkspaceStore()
     workspace_store.load_csv(b"x,y\n1,A\n1,A\n2,B\n", "duplicates.csv")
@@ -239,6 +263,53 @@ def test_export_replays_imputation_operations():
 
     assert "df['value'] = df['value'].fillna(df['value'].median())" in combined_sources
     assert "df['label'] = df['label'].fillna('Unknown')" in combined_sources
+
+
+def test_export_replays_encoding_and_scaling_transformations():
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(b"value,category\n1,low\n2,high\n3,low\n", "transform.csv")
+    session_id = workspace_store.active_session_id
+    workspace_store.apply_session_operation(
+        session_id,
+        "transform_column",
+        {"column": "category", "method": "ordinal", "order": "low, high"},
+    )
+    workspace_store.apply_session_operation(
+        session_id,
+        "transform_column",
+        {"column": "value", "method": "standardize"},
+    )
+
+    combined_sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "_ordinal_order = ['low', 'high']" in combined_sources
+    assert ".map({value: index for index, value in enumerate(_ordinal_order)}).astype('Int64')" in combined_sources
+    assert "df['value'] = (df['value'] - df['value'].mean()) / df['value'].std(ddof=0)" in combined_sources
+
+
+def test_export_replays_one_hot_and_min_max_transformations():
+    workspace_store = WorkspaceStore()
+    workspace_store.load_csv(b"value,category\n1,A\n2,B\n3,A\n", "transform.csv")
+    session_id = workspace_store.active_session_id
+    workspace_store.apply_session_operation(
+        session_id,
+        "transform_column",
+        {"column": "category", "method": "one_hot"},
+    )
+    workspace_store.apply_session_operation(
+        session_id,
+        "transform_column",
+        {"column": "value", "method": "min_max"},
+    )
+
+    combined_sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "_encoded = pd.get_dummies(df['category'], prefix='category'" in combined_sources
+    assert "df = pd.concat([df.drop(columns=['category']), _encoded], axis=1)" in combined_sources
+    assert (
+        "df['value'] = (df['value'] - df['value'].min()) / "
+        "(df['value'].max() - df['value'].min())"
+    ) in combined_sources
 
 
 def test_export_keeps_dataset_level_plot_markdown_minimal(csv_bytes: bytes):

@@ -361,6 +361,23 @@ def test_column_operations_expose_imputation_methods():
         assert f'"{method}"' in operations
 
 
+def test_column_operations_expose_replacement_methods_and_transformations():
+    details = read_frontend("components/ColumnDetails.jsx")
+    operations = (ROOT / "src" / "danaleo" / "core" / "operations.py").read_text(encoding="utf-8")
+    exporter = (ROOT / "src" / "danaleo" / "core" / "exporter.py").read_text(encoding="utf-8")
+
+    assert "replacement_method" in details
+    assert "NaN (missing value)" in details
+    assert "Mean of remaining values" in details
+    assert "Median of remaining values" in details
+    assert "Mode of remaining values" in details
+    assert "transform_column" in details
+    for method in ["one_hot", "ordinal", "min_max", "standardize"]:
+        assert method in details
+        assert f'"{method}"' in operations
+        assert f'method == "{method}"' in exporter
+
+
 def test_save_actions_open_named_file_dialog_with_location_picker():
     app = read_frontend("App.jsx")
     dialog = read_frontend("components/SaveFileDialog.jsx")

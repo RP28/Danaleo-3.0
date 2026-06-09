@@ -249,6 +249,32 @@ def test_imputation_is_recorded_and_replayed_by_progress_export():
     assert restored_store.require_session().data["value"].tolist() == [1.0, 2.0, 3.0]
 
 
+def test_transformations_are_recorded_and_replayed_by_progress_export():
+    workspace_store = WorkspaceStore()
+    workspace = workspace_store.load_csv(b"value,label\n1,A\n2,B\n3,A\n", "transform.csv")
+    session_id = workspace["active_session_id"]
+
+    workspace_store.apply_session_operation(
+        session_id,
+        "transform_column",
+        {"column": "label", "method": "one_hot"},
+    )
+    transformed = workspace_store.apply_session_operation(
+        session_id,
+        "transform_column",
+        {"column": "value", "method": "min_max"},
+    )
+
+    assert transformed["active_session"]["operations"][-1]["label"] == "Transform value: Min Max"
+    assert workspace_store.sessions[session_id].data.columns.tolist() == ["value", "label_A", "label_B"]
+
+    restored_store = WorkspaceStore()
+    restored_store.import_project(workspace_store.export_project())
+    restored = restored_store.require_session().data
+    assert restored.columns.tolist() == ["value", "label_A", "label_B"]
+    assert restored["value"].tolist() == [0.0, 0.5, 1.0]
+
+
 def test_child_session_created_after_parent_operations_uses_current_snapshot_but_not_future_parent_changes(
     loaded_store: WorkspaceStore,
 ):

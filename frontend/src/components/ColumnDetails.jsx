@@ -10,8 +10,11 @@ export default function ColumnDetails({ stats, column, onApply }) {
   const [oldValue, setOldValue] = useState('');
   const [newValue, setNewValue] = useState('');
   const [multiple, setMultiple] = useState(false);
-  const [imputationMethod, setImputationMethod] = useState('mean');
+  const [replacementMethod, setReplacementMethod] = useState('constant');
+  const [imputationMethod, setImputationMethod] = useState(stats?.kind === 'numeric' ? 'mean' : 'mode');
   const [imputationValue, setImputationValue] = useState('');
+  const [transformationMethod, setTransformationMethod] = useState(stats?.kind === 'numeric' ? 'min_max' : 'one_hot');
+  const [ordinalOrder, setOrdinalOrder] = useState('');
 
   if (!column || !stats) {
     return <aside className="details-panel empty"><p>Select a column to see stats, operations, and plot options.</p></aside>;
@@ -60,9 +63,29 @@ export default function ColumnDetails({ stats, column, onApply }) {
         <div className="stack separated">
           <label>Replace values in this column</label>
           <input placeholder="Old value" value={oldValue} onChange={(e) => setOldValue(e.target.value)} />
-          <input placeholder="New value" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
+          <select value={replacementMethod} onChange={(event) => setReplacementMethod(event.target.value)}>
+            <option value="constant">Custom value</option>
+            <option value="nan">NaN (missing value)</option>
+            {stats.kind === 'numeric' && <option value="mean">Mean of remaining values</option>}
+            {stats.kind === 'numeric' && <option value="median">Median of remaining values</option>}
+            <option value="mode">Mode of remaining values</option>
+          </select>
+          {replacementMethod === 'constant' && (
+            <input placeholder="New value" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
+          )}
           <label className="check"><input type="checkbox" checked={multiple} onChange={(e) => setMultiple(e.target.checked)}/> comma-separated multiple replace</label>
-          <button className="ghost-btn" onClick={() => onApply('replace_values', { column, old_value: oldValue, new_value: newValue, multiple })}>Replace</button>
+          <button
+            className="ghost-btn"
+            onClick={() => onApply('replace_values', {
+              column,
+              old_value: oldValue,
+              new_value: newValue,
+              multiple,
+              replacement_method: replacementMethod,
+            })}
+          >
+            Replace
+          </button>
         </div>
         <div className="stack separated">
           <label>Impute missing values</label>
@@ -85,6 +108,38 @@ export default function ColumnDetails({ stats, column, onApply }) {
             onClick={() => onApply('impute_missing', { column, method: imputationMethod, value: imputationValue })}
           >
             <Wand2 size={15}/> Impute missing values
+          </button>
+        </div>
+        <div className="stack separated">
+          <label>Transform this column</label>
+          <select value={transformationMethod} onChange={(event) => setTransformationMethod(event.target.value)}>
+            {stats.kind !== 'numeric' && <option value="one_hot">One-hot encoding</option>}
+            {stats.kind !== 'numeric' && <option value="ordinal">Ordinal encoding</option>}
+            {stats.kind === 'numeric' && <option value="min_max">Min-max scaling (0 to 1)</option>}
+            {stats.kind === 'numeric' && <option value="standardize">Standardization (z-score)</option>}
+          </select>
+          {transformationMethod === 'ordinal' && (
+            <>
+              <input
+                placeholder="Optional order: low, medium, high"
+                value={ordinalOrder}
+                onChange={(event) => setOrdinalOrder(event.target.value)}
+              />
+              <small className="muted">Leave blank to encode values in a stable sorted order.</small>
+            </>
+          )}
+          {transformationMethod === 'one_hot' && (
+            <small className="muted">Creates one binary column per category and removes this source column.</small>
+          )}
+          <button
+            className="ghost-btn"
+            onClick={() => onApply('transform_column', {
+              column,
+              method: transformationMethod,
+              order: ordinalOrder,
+            })}
+          >
+            <Wand2 size={15}/> Apply transformation
           </button>
         </div>
       </details>

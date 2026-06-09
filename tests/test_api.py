@@ -409,6 +409,38 @@ def test_api_applies_imputation_operation():
     assert response.json()["active_session"]["profile"]["missing_cells"] == 1
 
 
+def test_api_applies_replacement_methods_and_column_transformations():
+    client = TestClient(app)
+    workspace = upload_csv(client, b"value,category\n1,A\n-999,B\n3,A\n", "transform.csv")
+    session_id = workspace["active_session_id"]
+
+    replaced = client.post(
+        f"/api/sessions/{session_id}/operations",
+        json={
+            "operation_type": "replace_values",
+            "params": {
+                "column": "value",
+                "old_value": "-999",
+                "replacement_method": "nan",
+            },
+        },
+    )
+    encoded = client.post(
+        f"/api/sessions/{session_id}/operations",
+        json={
+            "operation_type": "transform_column",
+            "params": {"column": "category", "method": "one_hot"},
+        },
+    )
+
+    assert replaced.status_code == 200
+    assert replaced.json()["active_session"]["profile"]["missing_cells"] == 1
+    assert encoded.status_code == 200
+    assert encoded.json()["active_session"]["operations"][-1]["label"] == "Transform category: One Hot"
+    column_names = [column["name"] for column in encoded.json()["active_session"]["columns"]]
+    assert column_names == ["value", "category_A", "category_B"]
+
+
 def test_api_operation_and_plot_error_edges(csv_bytes: bytes):
     client = TestClient(app)
     workspace = upload_csv(client, csv_bytes)
