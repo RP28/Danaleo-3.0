@@ -25,8 +25,8 @@ src/danaleo/server/__init__.py
 src/danaleo/server/app.py
 src/danaleo/server/models.py
 src/danaleo/server/static/index.html
-src/danaleo/server/static/assets/index-B9Te0lI7.css
-src/danaleo/server/static/assets/index-DvCRIUky.js
+src/danaleo/server/static/assets/index-BViWmhr1.css
+src/danaleo/server/static/assets/index-CfEdmof8.js
 tests/test_api.py
 tests/test_exporter.py
 tests/test_frontend_regressions.py

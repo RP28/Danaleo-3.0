@@ -6,8 +6,9 @@ import ColumnDetails from './components/ColumnDetails.jsx';
 import PlotBuilder from './components/PlotBuilder.jsx';
 import SessionTree from './components/SessionTree.jsx';
 import SavedPlots from './components/SavedPlots.jsx';
+import OverviewDashboard from './components/OverviewDashboard.jsx';
 import Toast from './components/Toast.jsx';
-import { ArrowLeft, Download, Save } from 'lucide-react';
+import { ArrowLeft, BarChart3, Download, GitBranch, LayoutDashboard, Save } from 'lucide-react';
 
 
 function nextBranchName(_parent, sessions) {
@@ -26,6 +27,7 @@ export default function App() {
   const [columnStats, setColumnStats] = useState(null);
   const [activeFigure, setActiveFigure] = useState(null);
   const [toast, setToast] = useState(null);
+  const [activeView, setActiveView] = useState('overview');
 
   const activeSession = workspace?.active_session;
   const activeSessionId = workspace?.active_session_id;
@@ -172,12 +174,17 @@ export default function App() {
     return <UploadZone onUploaded={setWorkspace} onError={(text) => setToast({ type: 'error', text })} toast={toast} setToast={setToast} />;
   }
 
+  function exploreColumn(column) {
+    if (column) setSelectedColumn(column);
+    setActiveView('explore');
+  }
+
   return (
     <div className="app-shell">
       <Sidebar
         workspace={workspace}
         selectedColumn={selectedColumn}
-        onSelectColumn={setSelectedColumn}
+        onSelectColumn={exploreColumn}
         onDropColumn={(column) => {
           const message = `Drop column "${column}" from the current session?`;
           if (!window.confirm(message)) return;
@@ -198,42 +205,56 @@ export default function App() {
           </div>
         </header>
 
-        <SessionTree
-          workspace={workspace}
-          onActivate={activateSessionFromTree}
-          onCreate={createSessionFromTree}
-          onRename={renameSessionFromTree}
-          onDelete={deleteSessionFromTree}
-        />
+        <nav className="workspace-tabs" aria-label="Workspace sections">
+          <button className={activeView === 'overview' ? 'active' : ''} onClick={() => setActiveView('overview')}><LayoutDashboard size={15}/> Overview</button>
+          <button className={activeView === 'explore' ? 'active' : ''} onClick={() => setActiveView('explore')}><BarChart3 size={15}/> Explore & plot</button>
+          <button className={activeView === 'history' ? 'active' : ''} onClick={() => setActiveView('history')}><GitBranch size={15}/> Sessions</button>
+        </nav>
 
-        <section className="main-grid">
-          <ColumnDetails
-            stats={columnStats}
-            column={selectedColumn}
-            onApply={(operation, params) => handleWorkspaceUpdate(api.applyOperation(activeSessionId, operation, params))}
+        {activeView === 'overview' && (
+          <OverviewDashboard session={activeSession} onSelectColumn={exploreColumn} onOpenExplore={exploreColumn} />
+        )}
+
+        {activeView === 'history' && (
+          <SessionTree
+            workspace={workspace}
+            onActivate={activateSessionFromTree}
+            onCreate={createSessionFromTree}
+            onRename={renameSessionFromTree}
+            onDelete={deleteSessionFromTree}
           />
+        )}
 
-          <div className="plot-canvas">
-            <PlotBuilder
-              key={`${activeSessionId}-${selectedColumn}`}
-              column={selectedColumn}
+        {activeView === 'explore' && (
+          <section className="main-grid">
+            <ColumnDetails
               stats={columnStats}
-              sessionId={activeSessionId}
-              numericColumns={numericColumns}
-              categoricalColumns={categoricalColumns}
-              onPreview={setActiveFigure}
-              onSaved={setWorkspace}
-              onError={(text) => setToast({ type: 'error', text })}
+              column={selectedColumn}
+              onApply={(operation, params) => handleWorkspaceUpdate(api.applyOperation(activeSessionId, operation, params))}
             />
-            <SavedPlots
-              plots={workspace.saved_plots}
-              activeFigure={activeFigure}
-              onSelectFigure={setActiveFigure}
-              onWorkspaceUpdate={setWorkspace}
-              onError={(text) => setToast({ type: 'error', text })}
-            />
-          </div>
-        </section>
+
+            <div className="plot-canvas">
+              <PlotBuilder
+                key={`${activeSessionId}-${selectedColumn}`}
+                column={selectedColumn}
+                stats={columnStats}
+                sessionId={activeSessionId}
+                numericColumns={numericColumns}
+                categoricalColumns={categoricalColumns}
+                onPreview={setActiveFigure}
+                onSaved={setWorkspace}
+                onError={(text) => setToast({ type: 'error', text })}
+              />
+              <SavedPlots
+                plots={workspace.saved_plots}
+                activeFigure={activeFigure}
+                onSelectFigure={setActiveFigure}
+                onWorkspaceUpdate={setWorkspace}
+                onError={(text) => setToast({ type: 'error', text })}
+              />
+            </div>
+          </section>
+        )}
       </main>
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>

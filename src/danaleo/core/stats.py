@@ -20,6 +20,8 @@ def infer_kind(series: pd.Series) -> str:
 def _safe_value(value: Any) -> Any:
     if pd.isna(value):
         return None
+    if isinstance(value, (pd.Timestamp, pd.Timedelta)):
+        return str(value)
     if isinstance(value, np.generic):
         return value.item()
     return value
@@ -32,6 +34,60 @@ def dataframe_overview(df: pd.DataFrame) -> dict[str, Any]:
         "columns": int(len(df.columns)),
         "memory_bytes": memory_bytes,
         "memory_mb": round(memory_bytes / (1024 * 1024), 3),
+    }
+
+
+def dataset_profile(df: pd.DataFrame, preview_rows: int = 8) -> dict[str, Any]:
+    """Return a compact, JSON-safe profile for the overview-first UI."""
+    rows = len(df)
+    columns = column_cards(df)
+    missing_cells = int(df.isna().sum().sum())
+    total_cells = max(rows * len(df.columns), 1)
+    numeric_names = [card["name"] for card in columns if card["kind"] == "numeric"]
+    categorical_names = [card["name"] for card in columns if card["kind"] == "categorical"]
+
+    high_missing = sorted(
+        (
+            {"name": card["name"], "missing_pct": card["missing_pct"], "missing": card["missing"]}
+            for card in columns
+            if card["missing"] > 0
+        ),
+        key=lambda item: item["missing_pct"],
+        reverse=True,
+    )[:8]
+
+    correlations: list[dict[str, Any]] = []
+    correlation_names = numeric_names[:40]
+    if len(correlation_names) >= 2:
+        corr = df[correlation_names].corr(numeric_only=True)
+        for left_index, left in enumerate(corr.columns):
+            for right in corr.columns[left_index + 1 :]:
+                value = corr.loc[left, right]
+                if pd.notna(value):
+                    correlations.append(
+                        {"left": str(left), "right": str(right), "value": round(float(value), 4)}
+                    )
+        correlations.sort(key=lambda item: abs(item["value"]), reverse=True)
+
+    preview = [
+        {str(key): _safe_value(value) for key, value in row.items()}
+        for row in df.head(preview_rows).to_dict(orient="records")
+    ]
+
+    return {
+        "rows": int(rows),
+        "columns": int(len(df.columns)),
+        "numeric_columns": len(numeric_names),
+        "categorical_columns": len(categorical_names),
+        "datetime_columns": sum(card["kind"] == "datetime" for card in columns),
+        "missing_cells": missing_cells,
+        "missing_pct": round((missing_cells / total_cells) * 100, 2),
+        "duplicate_rows": int(df.duplicated().sum()),
+        "high_missing": high_missing,
+        "top_correlations": correlations[:8],
+        "correlation_columns_analyzed": len(correlation_names),
+        "preview_columns": [str(column) for column in df.columns[:12]],
+        "preview": preview,
     }
 
 

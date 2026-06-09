@@ -25,6 +25,11 @@ SUPPORTED_PLOT_TYPES = {
     "grouped_kde",
     "grouped_box",
     "grouped_violin",
+    "scatter",
+    "hexbin",
+    "line",
+    "correlation_heatmap",
+    "missing_values",
 }
 
 
@@ -106,6 +111,21 @@ def _format_axis_labels(ax: plt.Axes, rotation: int = 35) -> None:
     ax.tick_params(axis="x", labelrotation=rotation)
     for label in ax.get_xticklabels():
         label.set_ha("right")
+
+
+def _apply_axis_style(ax: plt.Axes, controls: dict[str, Any]) -> None:
+    if _as_bool(controls.get("show_grid"), True):
+        ax.grid(True, alpha=0.18, linestyle="--")
+        ax.set_axisbelow(True)
+
+    if _as_bool(controls.get("log_x"), False):
+        ax.set_xscale("log")
+    if _as_bool(controls.get("log_y"), False):
+        ax.set_yscale("log")
+
+    title = str(controls.get("chart_title") or "").strip()
+    if title:
+        ax.set_title(title)
 
 
 def _encode_figure(fig: plt.Figure) -> dict[str, Any]:
@@ -237,11 +257,24 @@ def _draw_top_n_bar(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[
     top_n = _as_int(controls.get("top_n"), 15, minimum=1, maximum=100)
     labels, values, y_label = _top_n_data(df, column, top_n, "bar_top_n")
 
-    ax.bar(labels, values)
+    sort_order = str(controls.get("sort_order") or "descending")
+    pairs = list(zip(labels, values))
+    if sort_order == "ascending":
+        pairs.sort(key=lambda item: item[1])
+    elif sort_order == "descending":
+        pairs.sort(key=lambda item: item[1], reverse=True)
+    labels, values = map(list, zip(*pairs))
+
+    if str(controls.get("orientation") or "vertical") == "horizontal":
+        ax.barh(labels, values)
+        ax.set_xlabel(y_label)
+        ax.set_ylabel(column)
+    else:
+        ax.bar(labels, values)
+        ax.set_xlabel(column)
+        ax.set_ylabel(y_label)
+        _format_axis_labels(ax)
     ax.set_title(f"Top {len(values)} values — {column}")
-    ax.set_xlabel(column)
-    ax.set_ylabel(y_label)
-    _format_axis_labels(ax)
 
 
 def _draw_top_n_pie(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
@@ -352,6 +385,128 @@ def _draw_grouped_violin(ax: plt.Axes, df: pd.DataFrame, column: str, controls: 
     _format_axis_labels(ax)
 
 
+def _comparison_column(df: pd.DataFrame, controls: dict[str, Any]) -> str:
+    column = str(controls.get("compare_with") or "").strip()
+    if not column:
+        raise ValueError("Choose a numeric column in Compare with")
+    _require_column(df, column)
+    return column
+
+
+def _paired_numeric(df: pd.DataFrame, x_column: str, y_column: str) -> pd.DataFrame:
+    paired = pd.DataFrame(
+        {
+            x_column: pd.to_numeric(df[x_column], errors="coerce"),
+            y_column: pd.to_numeric(df[y_column], errors="coerce"),
+        }
+    ).dropna()
+    if paired.empty:
+        raise ValueError("The selected columns have no paired numeric values")
+    return paired
+
+
+def _draw_scatter(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    compare_with = _comparison_column(df, controls)
+    marker_size = _as_float(controls.get("marker_size"), 28, minimum=4, maximum=300)
+    alpha = _as_float(controls.get("alpha"), 0.72, minimum=0.05, maximum=1)
+    group_column = str(controls.get("group_by") or "").strip()
+
+    if group_column:
+        _require_column(df, group_column)
+        groups = _limited_groups(df, group_column, _as_int(controls.get("group_limit"), 8, 1, 30))
+        group_values = _category_series(df, group_column)
+        drawn = 0
+        for group in groups:
+            subset = df[group_values == group]
+            try:
+                paired = _paired_numeric(subset, column, compare_with)
+            except ValueError:
+                continue
+            ax.scatter(paired[column], paired[compare_with], s=marker_size, alpha=alpha, label=group)
+            drawn += 1
+        if not drawn:
+            raise ValueError("The selected groups have no paired numeric values")
+        ax.legend(fontsize=8)
+    else:
+        paired = _paired_numeric(df, column, compare_with)
+        ax.scatter(paired[column], paired[compare_with], s=marker_size, alpha=alpha)
+
+    ax.set_title(f"{compare_with} vs {column}")
+    ax.set_xlabel(column)
+    ax.set_ylabel(compare_with)
+
+
+def _draw_hexbin(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    compare_with = _comparison_column(df, controls)
+    paired = _paired_numeric(df, column, compare_with)
+    result = ax.hexbin(
+        paired[column],
+        paired[compare_with],
+        gridsize=_as_int(controls.get("gridsize"), 30, minimum=8, maximum=100),
+        mincnt=1,
+        cmap="viridis",
+    )
+    ax.figure.colorbar(result, ax=ax, label="Count")
+    ax.set_title(f"Density — {compare_with} vs {column}")
+    ax.set_xlabel(column)
+    ax.set_ylabel(compare_with)
+
+
+def _draw_line(ax: plt.Axes, df: pd.DataFrame, column: str, controls: dict[str, Any]) -> None:
+    compare_with = _comparison_column(df, controls)
+    paired = _paired_numeric(df, column, compare_with)
+    if _as_bool(controls.get("sort_x"), True):
+        paired = paired.sort_values(column)
+    ax.plot(
+        paired[column],
+        paired[compare_with],
+        marker="o" if _as_bool(controls.get("show_markers"), True) else None,
+        markersize=max(2, _as_float(controls.get("marker_size"), 20, 4, 300) / 5),
+        alpha=_as_float(controls.get("alpha"), 0.8, 0.05, 1),
+    )
+    ax.set_title(f"{compare_with} over {column}")
+    ax.set_xlabel(column)
+    ax.set_ylabel(compare_with)
+
+
+def _draw_correlation_heatmap(ax: plt.Axes, df: pd.DataFrame, _column: str, controls: dict[str, Any]) -> None:
+    numeric = df.select_dtypes(include=[np.number])
+    limit = _as_int(controls.get("correlation_limit"), 16, minimum=2, maximum=40)
+    numeric = numeric.iloc[:, :limit]
+    if numeric.shape[1] < 2:
+        raise ValueError("Correlation heatmap needs at least two numeric columns")
+
+    corr = numeric.corr()
+    image = ax.imshow(corr.to_numpy(), vmin=-1, vmax=1, cmap="coolwarm")
+    ax.figure.colorbar(image, ax=ax, label="Correlation")
+    ax.set_xticks(range(len(corr.columns)))
+    ax.set_yticks(range(len(corr.columns)))
+    ax.set_xticklabels(corr.columns)
+    ax.set_yticklabels(corr.columns)
+    _format_axis_labels(ax, rotation=45)
+    ax.set_title("Numeric correlation heatmap")
+
+    if _as_bool(controls.get("show_values"), True) and len(corr.columns) <= 18:
+        for row in range(len(corr.columns)):
+            for col in range(len(corr.columns)):
+                ax.text(col, row, f"{corr.iloc[row, col]:.2f}", ha="center", va="center", fontsize=7)
+
+
+def _draw_missing_values(ax: plt.Axes, df: pd.DataFrame, _column: str, controls: dict[str, Any]) -> None:
+    missing = (df.isna().mean() * 100).sort_values(ascending=True)
+    if not _as_bool(controls.get("include_complete"), False):
+        missing = missing[missing > 0]
+    if missing.empty:
+        missing = pd.Series([0.0], index=["No missing values"])
+    limit = _as_int(controls.get("top_n"), 20, minimum=1, maximum=100)
+    missing = missing.tail(limit)
+    ax.barh([str(value) for value in missing.index], missing.to_numpy())
+    ax.set_title("Missing values by column")
+    ax.set_xlabel("Missing (%)")
+    ax.set_ylabel("Column")
+    ax.set_xlim(0, 100)
+
+
 def _draw_one(ax: plt.Axes, df: pd.DataFrame, column: str, plot_type: str, controls: dict[str, Any]) -> None:
     if plot_type == "histogram":
         _draw_histogram(ax, df, column, controls)
@@ -371,8 +526,19 @@ def _draw_one(ax: plt.Axes, df: pd.DataFrame, column: str, plot_type: str, contr
         _draw_grouped_box(ax, df, column, controls)
     elif plot_type == "grouped_violin":
         _draw_grouped_violin(ax, df, column, controls)
+    elif plot_type == "scatter":
+        _draw_scatter(ax, df, column, controls)
+    elif plot_type == "hexbin":
+        _draw_hexbin(ax, df, column, controls)
+    elif plot_type == "line":
+        _draw_line(ax, df, column, controls)
+    elif plot_type == "correlation_heatmap":
+        _draw_correlation_heatmap(ax, df, column, controls)
+    elif plot_type == "missing_values":
+        _draw_missing_values(ax, df, column, controls)
     else:
         raise ValueError(f"Unsupported plot type: {plot_type}")
+    _apply_axis_style(ax, controls)
 
 
 def _subplot_columns(column: str, controls: dict[str, Any]) -> list[str]:

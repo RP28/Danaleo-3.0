@@ -1007,3 +1007,94 @@ textarea {
   color: var(--muted);
   font-size: 11px;
 }
+
+/* Overview-first EDA workspace ----------------------------------------- */
+.workspace-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  border: 1px solid var(--borderSoft);
+  border-radius: 12px;
+  background: rgba(12, 16, 24, 0.72);
+}
+.workspace-tabs button,
+.kind-filter button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  padding: 7px 10px;
+  font-size: 11px;
+}
+.workspace-tabs button:hover,
+.workspace-tabs button.active,
+.kind-filter button.active { background: var(--primarySoft); color: var(--text); }
+.overview-dashboard { display: flex; flex-direction: column; gap: 12px; }
+.hero-panel, .insight-panel, .data-preview-panel, .metric-card {
+  border: 1px solid var(--borderSoft);
+  background: rgba(16, 19, 28, 0.86);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.hero-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px;
+  background: radial-gradient(circle at 90% 10%, rgba(51, 214, 197, 0.13), transparent 34%), linear-gradient(135deg, rgba(124, 108, 255, 0.12), rgba(16, 19, 28, 0.92));
+}
+.hero-panel h2 { max-width: 720px; margin: 0 0 7px; font-size: clamp(21px, 3vw, 32px); }
+.hero-panel p:last-child { max-width: 720px; margin-bottom: 0; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.metric-card { display: flex; align-items: center; gap: 12px; padding: 14px; }
+.metric-icon {
+  display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 auto;
+  border-radius: 11px; background: var(--primarySoft); color: var(--accent);
+}
+.metric-card span:not(.metric-icon), .metric-card small { display: block; color: var(--muted); font-size: 10px; }
+.metric-card strong { display: block; margin: 2px 0; font-size: 20px; }
+.insight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.insight-panel, .data-preview-panel { min-width: 0; padding: 14px; }
+.panel-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.panel-heading h3 { margin: 0; font-size: 15px; }
+.insight-row {
+  width: 100%; display: flex; justify-content: space-between; gap: 12px; padding: 9px 0;
+  border: 0; border-bottom: 1px solid var(--borderSoft); background: transparent; color: var(--text); text-align: left;
+}
+.insight-row:hover span { color: var(--accent); }
+.insight-row strong { color: var(--muted); font-size: 10px; text-align: right; }
+.empty-note { color: var(--muted); margin: 18px 0 8px; }
+.table-scroll { overflow: auto; border: 1px solid var(--borderSoft); border-radius: 11px; }
+.data-preview-panel table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.data-preview-panel th, .data-preview-panel td {
+  max-width: 220px; padding: 8px 10px; border-bottom: 1px solid var(--borderSoft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left;
+}
+.data-preview-panel th { position: sticky; top: 0; background: var(--panelRaised); color: var(--accent); }
+.sidebar-summary {
+  display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 4px 6px; align-items: baseline;
+  padding: 8px 9px; border: 1px solid var(--borderSoft); border-radius: 10px; background: var(--panelSoft);
+}
+.sidebar-summary span, .section-label span { color: var(--muted); font-size: 10px; text-transform: none; letter-spacing: 0; }
+.column-search {
+  display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--border);
+  border-radius: 8px; background: #0c1018; color: var(--muted);
+}
+.column-search input { border: 0; padding-left: 0; background: transparent; }
+.kind-filter { display: flex; gap: 3px; overflow-x: auto; }
+.kind-filter button { padding: 5px 7px; white-space: nowrap; }
+@media (max-width: 1100px) {
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .insight-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .hero-panel { align-items: start; flex-direction: column; }
+  .metric-grid { grid-template-columns: 1fr; }
+  .workspace-tabs { width: 100%; overflow-x: auto; }
+  .workspace-tabs button { white-space: nowrap; }
+}

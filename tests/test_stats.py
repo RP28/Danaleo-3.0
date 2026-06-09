@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from danaleo.core.stats import column_cards, column_stats, dataframe_overview, infer_kind
+from danaleo.core.stats import column_cards, column_stats, dataframe_overview, dataset_profile, infer_kind
 
 
 def test_dataframe_overview_and_column_cards():
@@ -40,6 +40,28 @@ def test_dataframe_overview_handles_empty_dataframe():
     assert overview["columns"] == 2
     assert overview["memory_bytes"] >= 0
     assert overview["memory_mb"] >= 0
+
+
+def test_dataset_profile_surfaces_quality_relationships_and_preview():
+    df = pd.DataFrame(
+        {
+            "x": [1, 2, 2, None],
+            "y": [2, 4, 4, None],
+            "group": ["A", "B", "B", None],
+        }
+    )
+
+    profile = dataset_profile(df)
+
+    assert profile["rows"] == 4
+    assert profile["numeric_columns"] == 2
+    assert profile["categorical_columns"] == 1
+    assert profile["missing_cells"] == 3
+    assert profile["duplicate_rows"] == 1
+    assert profile["high_missing"][0]["missing_pct"] == 25.0
+    assert profile["top_correlations"][0] == {"left": "x", "right": "y", "value": 1.0}
+    assert profile["preview_columns"] == ["x", "y", "group"]
+    assert len(profile["preview"]) == 4
 
 
 def test_column_stats_for_numeric_and_categorical_columns():

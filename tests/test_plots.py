@@ -110,6 +110,48 @@ def test_top_n_plots_work_for_numeric_columns_too(plot_df):
     assert pie_payload["column"] == "value"
 
 
+@pytest.mark.parametrize(
+    ("plot_type", "controls"),
+    [
+        ("scatter", {"compare_with": "other", "group_by": "group", "alpha": 0.6}),
+        ("hexbin", {"compare_with": "other", "gridsize": 18}),
+        ("line", {"compare_with": "other", "sort_x": True, "show_markers": True}),
+        ("correlation_heatmap", {"show_values": True}),
+        ("missing_values", {"top_n": 8}),
+    ],
+)
+def test_build_figure_supports_relationship_and_quality_plots(plot_df, plot_type, controls):
+    payload = build_figure(plot_df, "value", plot_type, controls=controls)
+
+    assert_png_payload(payload)
+    assert payload["plot_type"] == plot_type
+
+
+@pytest.mark.parametrize("plot_type", ["scatter", "hexbin", "line"])
+def test_relationship_plots_require_comparison_column(plot_df, plot_type):
+    with pytest.raises(ValueError, match="Compare with"):
+        build_figure(plot_df, "value", plot_type)
+
+
+def test_plot_visual_settings_are_preserved(plot_df):
+    payload = build_figure(
+        plot_df,
+        "group",
+        "bar_top_n",
+        controls={
+            "top_n": 3,
+            "orientation": "horizontal",
+            "sort_order": "ascending",
+            "chart_title": "Custom title",
+            "show_grid": False,
+        },
+    )
+
+    assert_png_payload(payload)
+    assert payload["controls"]["orientation"] == "horizontal"
+    assert payload["controls"]["chart_title"] == "Custom title"
+
+
 def test_build_figure_applies_local_query_without_changing_source(plot_df):
     original_rows = len(plot_df)
 

@@ -7,6 +7,11 @@ const numericPlotTypes = [
   ['kde', 'KDE'],
   ['box', 'Box plot'],
   ['violin', 'Violin plot'],
+  ['scatter', 'Scatter relationship'],
+  ['hexbin', 'Hexbin density'],
+  ['line', 'Line relationship'],
+  ['correlation_heatmap', 'Correlation heatmap'],
+  ['missing_values', 'Missing values overview'],
   ['bar_top_n', 'Top-N bar'],
   ['pie_top_n', 'Top-N pie'],
   ['grouped_kde', 'KDE by category'],
@@ -16,12 +21,16 @@ const numericPlotTypes = [
 
 const categoricalPlotTypes = [
   ['bar_top_n', 'Top-N bar'],
-  ['pie_top_n', 'Top-N pie']
+  ['pie_top_n', 'Top-N pie'],
+  ['correlation_heatmap', 'Correlation heatmap'],
+  ['missing_values', 'Missing values overview']
 ];
 
 const groupedPlotTypes = new Set(['grouped_kde', 'grouped_box', 'grouped_violin']);
 const kdePlotTypes = new Set(['kde', 'grouped_kde']);
 const topNPlotTypes = new Set(['bar_top_n', 'pie_top_n']);
+const relationshipPlotTypes = new Set(['scatter', 'hexbin', 'line']);
+const noSubplotPlotTypes = new Set(['scatter', 'hexbin', 'line', 'correlation_heatmap', 'missing_values']);
 
 function defaultControls() {
   return {
@@ -36,7 +45,22 @@ function defaultControls() {
     subplot_enabled: false,
     subplot_columns: [],
     subplot_cols: 2,
-    subplot_limit: 12
+    subplot_limit: 12,
+    compare_with: '',
+    marker_size: 28,
+    alpha: 0.72,
+    gridsize: 30,
+    sort_x: true,
+    show_markers: true,
+    correlation_limit: 16,
+    show_values: true,
+    include_complete: false,
+    orientation: 'vertical',
+    sort_order: 'descending',
+    show_grid: true,
+    log_x: false,
+    log_y: false,
+    chart_title: ''
   };
 }
 
@@ -81,10 +105,11 @@ export default function PlotBuilder({
   }, [column, controls.subplot_columns, subplotOptions]);
 
   const canUseGroupedPlots = stats?.kind === 'numeric' && groupOptions.length > 0;
-  const canUseSubplots = subplotOptions.length > 1;
+  const canUseSubplots = subplotOptions.length > 1 && !noSubplotPlotTypes.has(plotType);
   const isGroupedPlot = groupedPlotTypes.has(plotType);
   const isKdePlot = kdePlotTypes.has(plotType);
   const isTopNPlot = topNPlotTypes.has(plotType);
+  const isRelationshipPlot = relationshipPlotTypes.has(plotType);
 
   useEffect(() => {
     const nextTypes = stats?.kind === 'numeric' ? numericPlotTypes : categoricalPlotTypes;
@@ -138,6 +163,11 @@ export default function PlotBuilder({
   function buildPayload() {
     const nextControls = { ...controls };
 
+    if (noSubplotPlotTypes.has(plotType)) {
+      nextControls.subplot_enabled = false;
+      nextControls.subplot_columns = [];
+    }
+
     if (!isGroupedPlot) {
       nextControls.group_by = '';
     }
@@ -152,6 +182,10 @@ export default function PlotBuilder({
 
     if (isTopNPlot && Number(nextControls.top_n) < 1) {
       throw new Error('Top N must be at least 1');
+    }
+
+    if (isRelationshipPlot && !nextControls.compare_with) {
+      throw new Error('Choose a numeric column in Compare with');
     }
 
     if (nextControls.subplot_enabled) {
@@ -246,6 +280,70 @@ export default function PlotBuilder({
             placeholder={`Optional, e.g. \`${column}\` > 0`}
           />
         </label>
+
+        {isRelationshipPlot && (
+          <label>
+            Compare with
+            <select value={controls.compare_with} onChange={(e) => updateControl('compare_with', e.target.value)}>
+              <option value="">Choose numeric column</option>
+              {numericColumns.filter((c) => c !== column).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+        )}
+
+        {plotType === 'scatter' && groupOptions.length > 0 && (
+          <label>
+            Color by
+            <select value={controls.group_by} onChange={(e) => updateControl('group_by', e.target.value)}>
+              <option value="">No grouping</option>
+              {groupOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+        )}
+
+        {(plotType === 'scatter' || plotType === 'line') && (
+          <label>
+            Opacity
+            <input type="number" min="0.05" max="1" step="0.05" value={controls.alpha} onChange={(e) => updateControl('alpha', Number(e.target.value))} />
+          </label>
+        )}
+
+        {(plotType === 'scatter' || plotType === 'line') && (
+          <label>
+            Marker size
+            <input type="number" min="4" max="300" value={controls.marker_size} onChange={(e) => updateControl('marker_size', Number(e.target.value))} />
+          </label>
+        )}
+
+        {plotType === 'hexbin' && (
+          <label>
+            Grid density
+            <input type="number" min="8" max="100" value={controls.gridsize} onChange={(e) => updateControl('gridsize', Number(e.target.value))} />
+          </label>
+        )}
+
+        {plotType === 'line' && (
+          <label className="check"><input type="checkbox" checked={!!controls.sort_x} onChange={(e) => updateControl('sort_x', e.target.checked)} /> sort by X</label>
+        )}
+
+        {plotType === 'line' && (
+          <label className="check"><input type="checkbox" checked={!!controls.show_markers} onChange={(e) => updateControl('show_markers', e.target.checked)} /> show markers</label>
+        )}
+
+        {plotType === 'correlation_heatmap' && (
+          <label>
+            Max numeric columns
+            <input type="number" min="2" max="40" value={controls.correlation_limit} onChange={(e) => updateControl('correlation_limit', Number(e.target.value))} />
+          </label>
+        )}
+
+        {plotType === 'correlation_heatmap' && (
+          <label className="check"><input type="checkbox" checked={!!controls.show_values} onChange={(e) => updateControl('show_values', e.target.checked)} /> show values</label>
+        )}
+
+        {plotType === 'missing_values' && (
+          <label className="check"><input type="checkbox" checked={!!controls.include_complete} onChange={(e) => updateControl('include_complete', e.target.checked)} /> include complete columns</label>
+        )}
 
         {plotType === 'histogram' && (
           <label>
@@ -350,9 +448,9 @@ export default function PlotBuilder({
           </label>
         )}
 
-        {isTopNPlot && (
+        {(isTopNPlot || plotType === 'missing_values') && (
           <label>
-            Top N
+            {plotType === 'missing_values' ? 'Max columns' : 'Top N'}
             <input
               type="number"
               min="1"
@@ -362,7 +460,41 @@ export default function PlotBuilder({
             />
           </label>
         )}
+
+        {plotType === 'bar_top_n' && (
+          <label>
+            Orientation
+            <select value={controls.orientation} onChange={(e) => updateControl('orientation', e.target.value)}>
+              <option value="vertical">Vertical</option>
+              <option value="horizontal">Horizontal</option>
+            </select>
+          </label>
+        )}
+
+        {plotType === 'bar_top_n' && (
+          <label>
+            Sort
+            <select value={controls.sort_order} onChange={(e) => updateControl('sort_order', e.target.value)}>
+              <option value="descending">Descending</option>
+              <option value="ascending">Ascending</option>
+              <option value="none">Original</option>
+            </select>
+          </label>
+        )}
       </div>
+
+      <details className="soft-details">
+        <summary>Visual settings</summary>
+        <div className="builder-controls">
+          <label className="wide-control">
+            Chart title
+            <input value={controls.chart_title} onChange={(e) => updateControl('chart_title', e.target.value)} placeholder="Use the automatic title" />
+          </label>
+          <label className="check"><input type="checkbox" checked={!!controls.show_grid} onChange={(e) => updateControl('show_grid', e.target.checked)} /> show grid</label>
+          <label className="check"><input type="checkbox" checked={!!controls.log_x} onChange={(e) => updateControl('log_x', e.target.checked)} /> log X axis</label>
+          <label className="check"><input type="checkbox" checked={!!controls.log_y} onChange={(e) => updateControl('log_y', e.target.checked)} /> log Y axis</label>
+        </div>
+      </details>
 
       {canUseSubplots && (
         <details className="soft-details">

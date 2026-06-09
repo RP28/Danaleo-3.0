@@ -124,6 +124,11 @@ def test_plot_builder_exposes_current_plot_modes_and_controls():
         "grouped_kde",
         "grouped_box",
         "grouped_violin",
+        "scatter",
+        "hexbin",
+        "line",
+        "correlation_heatmap",
+        "missing_values",
     ]:
         assert plot_type in source
 
@@ -140,8 +145,34 @@ def test_plot_builder_exposes_current_plot_modes_and_controls():
         "subplot_columns",
         "subplot_cols",
         "subplot_limit",
+        "compare_with",
+        "marker_size",
+        "alpha",
+        "gridsize",
+        "orientation",
+        "sort_order",
+        "show_grid",
+        "log_x",
+        "log_y",
+        "chart_title",
     ]:
         assert control in source
+
+
+def test_workspace_is_overview_first_and_keeps_sessions_in_dedicated_view():
+    app = read_frontend("App.jsx")
+    overview = read_frontend("components/OverviewDashboard.jsx")
+    sidebar = read_frontend("components/Sidebar.jsx")
+
+    assert "OverviewDashboard" in app
+    assert "activeView" in app
+    assert "Overview" in app
+    assert "Explore & plot" in app
+    assert "Sessions" in app
+    assert "Strongest correlations" in overview
+    assert "Columns needing attention" in overview
+    assert "First {profile.preview.length} rows" in overview
+    assert "Find a column" in sidebar
 
 
 def test_plot_builder_keeps_plot_filter_local_and_sends_export_metadata():

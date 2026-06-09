@@ -9,6 +9,7 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload a C
 * Upload CSV files
 * Optional sampling during upload
 * Column overview and column-level statistics
+* Overview-first dataset profile with quality flags, correlations, and row preview
 * Dataframe sessions and branching
 * Session tree with operation history
 * Rename, activate, and delete sessions
@@ -20,6 +21,8 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload a C
 * Top-N plots for categorical and numeric columns
 * Grouped plots
 * Multi-column subplot-style plotting
+* Scatter, hexbin, line relationship, correlation heatmap, and missing-values plots
+* Shared chart title, grid, log-axis, sorting, orientation, marker, and opacity controls
 * Save plots with export notes
 * Include or skip saved plots during notebook export
 * Export EDA workflow to `.ipynb`

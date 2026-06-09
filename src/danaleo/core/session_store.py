@@ -13,7 +13,7 @@ import pandas as pd
 
 from danaleo.core.operations import apply_operation, operation_label
 from danaleo.core.plots import build_figure
-from danaleo.core.stats import column_cards, dataframe_overview
+from danaleo.core.stats import column_cards, dataframe_overview, dataset_profile
 
 
 @dataclass
@@ -527,8 +527,8 @@ class WorkspaceStore:
         self.time_counter = max_time
         return self.workspace_summary()
 
-    def session_summary(self, session: SessionRecord) -> dict[str, Any]:
-        return {
+    def session_summary(self, session: SessionRecord, include_profile: bool = False) -> dict[str, Any]:
+        summary = {
             "id": session.id,
             "name": session.name,
             "parent_id": session.parent_id,
@@ -539,6 +539,9 @@ class WorkspaceStore:
             "columns": column_cards(session.data),
             "operations": [op.__dict__ for op in session.operations],
         }
+        if include_profile:
+            summary["profile"] = dataset_profile(session.data)
+        return summary
 
     def workspace_summary(self) -> dict[str, Any]:
         active = self.require_session(self.active_session_id) if self.ready else None
@@ -548,7 +551,7 @@ class WorkspaceStore:
             "csv_path": self.csv_path,
             "sample_info": self.sample_info,
             "active_session_id": self.active_session_id,
-            "active_session": self.session_summary(active) if active else None,
+            "active_session": self.session_summary(active, include_profile=True) if active else None,
             "sessions": [self.session_summary(s) for s in sorted(self.sessions.values(), key=lambda x: x.created_time)],
             "saved_plots": [p.__dict__ for p in sorted(self.saved_plots.values(), key=lambda x: x.created_time)],
         }

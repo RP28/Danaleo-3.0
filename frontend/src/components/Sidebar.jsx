@@ -1,7 +1,14 @@
-import { Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Search, Trash2 } from 'lucide-react';
 
 export default function Sidebar({ workspace, selectedColumn, onSelectColumn, onDropColumn }) {
   const active = workspace.active_session;
+  const [query, setQuery] = useState('');
+  const [kind, setKind] = useState('all');
+  const visibleColumns = useMemo(() => active.columns.filter((column) => {
+    const matchesQuery = column.name.toLowerCase().includes(query.trim().toLowerCase());
+    return matchesQuery && (kind === 'all' || column.kind === kind);
+  }), [active.columns, kind, query]);
 
   return (
     <aside className="sidebar">
@@ -14,9 +21,22 @@ export default function Sidebar({ workspace, selectedColumn, onSelectColumn, onD
       </div>
 
       <section className="sidebar-section grow">
-        <p className="section-label">Columns</p>
+        <div className="sidebar-summary">
+          <strong>{active.overview.rows.toLocaleString()}</strong><span>rows</span>
+          <strong>{active.overview.columns}</strong><span>columns</span>
+        </div>
+        <p className="section-label">Columns <span>{visibleColumns.length}/{active.columns.length}</span></p>
+        <label className="column-search">
+          <Search size={14} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a column" />
+        </label>
+        <div className="kind-filter">
+          {['all', 'numeric', 'categorical', 'datetime'].map((value) => (
+            <button key={value} className={kind === value ? 'active' : ''} onClick={() => setKind(value)}>{value}</button>
+          ))}
+        </div>
         <div className="column-list">
-          {active.columns.map((col) => (
+          {visibleColumns.map((col) => (
             <div
               className={`column-item ${selectedColumn === col.name ? 'selected' : ''}`}
               key={col.name}
