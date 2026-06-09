@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Search, Trash2 } from 'lucide-react';
 
-export default function Sidebar({ workspace, selectedColumn, onSelectColumn, onDropColumn }) {
+export default function Sidebar({ workspace, selectedColumn, onSelectColumn, onDropColumn, savedPlots }) {
   const active = workspace.active_session;
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState('all');
@@ -21,11 +21,10 @@ export default function Sidebar({ workspace, selectedColumn, onSelectColumn, onD
       </div>
 
       <section className="sidebar-section grow">
-        <div className="sidebar-summary">
-          <strong>{active.overview.rows.toLocaleString()}</strong><span>rows</span>
-          <strong>{active.overview.columns}</strong><span>columns</span>
+        <div className="column-heading">
+          <p className="section-label">Columns <span>{visibleColumns.length}/{active.columns.length}</span></p>
+          <span>{active.overview.rows.toLocaleString()} rows</span>
         </div>
-        <p className="section-label">Columns <span>{visibleColumns.length}/{active.columns.length}</span></p>
         <label className="column-search">
           <Search size={14} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a column" />
@@ -62,6 +61,7 @@ export default function Sidebar({ workspace, selectedColumn, onSelectColumn, onD
             </div>
           ))}
         </div>
+        {savedPlots}
       </section>
     </aside>
   );

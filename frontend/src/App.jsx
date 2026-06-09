@@ -10,7 +10,7 @@ import OverviewDashboard from './components/OverviewDashboard.jsx';
 import Toast from './components/Toast.jsx';
 import DatasetTabs from './components/DatasetTabs.jsx';
 import SaveFileDialog from './components/SaveFileDialog.jsx';
-import { BarChart3, Download, GitBranch, LayoutDashboard, Save, Trash2 } from 'lucide-react';
+import { BarChart3, Download, GitBranch, LayoutDashboard, Save, Trash2, X } from 'lucide-react';
 
 
 function nextBranchName(_parent, sessions) {
@@ -202,6 +202,18 @@ export default function App() {
           if (!window.confirm(message)) return;
           handleWorkspaceUpdate(api.applyOperation(activeSessionId, 'drop_column', { column }));
         }}
+        savedPlots={(
+          <SavedPlots
+            plots={workspace.saved_plots}
+            activeFigure={activeFigure}
+            onSelectFigure={(figure) => {
+              setActiveFigure(figure);
+              setActiveView('explore');
+            }}
+            onWorkspaceUpdate={setWorkspace}
+            onError={(text) => setToast({ type: 'error', text })}
+          />
+        )}
       />
 
       <main className="workspace">
@@ -261,6 +273,22 @@ export default function App() {
             />
 
             <div className="plot-canvas">
+              {activeFigure?.id && activeFigure.image && (
+                <section className="saved-figure-panel">
+                  <div className="saved-figure-header">
+                    <div>
+                      <p className="eyebrow">Saved plot</p>
+                      <strong>{activeFigure.savedTitle || 'Selected figure'}</strong>
+                    </div>
+                    <button className="icon-btn" type="button" onClick={() => setActiveFigure(null)} aria-label="Close saved plot preview">
+                      <X size={15} />
+                    </button>
+                  </div>
+                  <div className="plot-card active-figure image-preview-card">
+                    <img className="plot-image" src={activeFigure.image} alt="Selected saved plot" />
+                  </div>
+                </section>
+              )}
               <PlotBuilder
                 key={`${activeSessionId}-${selectedColumn}`}
                 column={selectedColumn}
@@ -270,13 +298,6 @@ export default function App() {
                 categoricalColumns={categoricalColumns}
                 onPreview={setActiveFigure}
                 onSaved={setWorkspace}
-                onError={(text) => setToast({ type: 'error', text })}
-              />
-              <SavedPlots
-                plots={workspace.saved_plots}
-                activeFigure={activeFigure}
-                onSelectFigure={setActiveFigure}
-                onWorkspaceUpdate={setWorkspace}
                 onError={(text) => setToast({ type: 'error', text })}
               />
             </div>

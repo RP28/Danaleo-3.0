@@ -24,10 +24,12 @@ export default function OverviewDashboard({ session, provenance, onSelectColumn,
   return (
     <div className="overview-dashboard">
       <section className="hero-panel">
-        <div>
+        <div className="profile-summary">
           <p className="eyebrow">Dataset profile</p>
-          <h2>{session.name}</h2>
-          <p className="muted">{profile.rows.toLocaleString()} observations across {profile.columns} variables.</p>
+          <div>
+            <h2>{session.name}</h2>
+            <p className="muted">{profile.rows.toLocaleString()} observations · {profile.columns} variables</p>
+          </div>
         </div>
         <button className="primary-btn" onClick={() => onOpenExplore(columns[0]?.name)}>
           Explore columns <ArrowRight size={16} />

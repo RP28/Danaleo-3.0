@@ -1133,6 +1133,218 @@ textarea {
   .workspace-tabs button { white-space: nowrap; }
 }
 
+/* Compact workspace library ------------------------------------------- */
+.app-shell {
+  grid-template-columns: 250px minmax(0, 1fr);
+}
+
+.sidebar {
+  padding: 11px;
+  gap: 9px;
+}
+
+.sidebar-header {
+  padding-bottom: 8px;
+}
+
+.sidebar-section.grow {
+  gap: 6px;
+  overflow: hidden;
+}
+
+.column-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.column-heading > span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.column-search input {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.kind-filter button {
+  padding: 4px 6px;
+  font-size: 10px;
+}
+
+.column-list {
+  min-height: 84px;
+  flex: 1 1 auto;
+  gap: 4px;
+}
+
+.column-item {
+  padding: 6px 7px;
+  border-radius: 9px;
+}
+
+.column-delete-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+}
+
+.saved-section {
+  flex: 0 1 38vh;
+  min-height: 78px;
+  padding: 8px 0 0;
+  overflow: hidden;
+  border: 0;
+  border-top: 1px solid var(--borderSoft);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.saved-header {
+  margin-bottom: 6px;
+}
+
+.saved-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: calc(38vh - 30px);
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.saved-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  padding: 6px;
+  border-radius: 9px;
+  background: rgba(21, 26, 39, 0.58);
+}
+
+.saved-card.selected {
+  border-color: var(--accent);
+  background: rgba(51, 214, 197, 0.08);
+}
+
+.saved-card-main {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.saved-card-main strong,
+.saved-card-main small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-card-main strong {
+  font-size: 11px;
+}
+
+.saved-card-main small {
+  margin-top: 1px;
+  font-size: 9.5px;
+}
+
+.saved-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.icon-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--borderSoft);
+  border-radius: 7px;
+  background: rgba(12, 16, 24, 0.72);
+  color: var(--muted);
+}
+
+.icon-btn:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.icon-btn.included {
+  color: var(--accent);
+}
+
+.saved-empty {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.saved-figure-panel {
+  padding: 10px;
+  border: 1px solid var(--borderSoft);
+  border-radius: 14px;
+  background: rgba(16, 19, 28, 0.86);
+  box-shadow: var(--shadow);
+}
+
+.saved-figure-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.saved-figure-header .eyebrow {
+  margin-bottom: 1px;
+}
+
+.saved-figure-panel .plot-card {
+  height: min(48vh, 430px);
+  min-height: 260px;
+  margin-top: 8px;
+}
+
+.workspace-tabs {
+  margin-bottom: 10px;
+}
+
+.main-grid {
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.plot-builder {
+  padding: 10px;
+}
+
+.builder-header {
+  margin-bottom: 8px;
+}
+
+.builder-controls {
+  gap: 6px;
+}
+
+@media (max-width: 1100px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar { height: auto; max-height: none; overflow: visible; }
+  .sidebar-section.grow { overflow: visible; }
+  .column-list, .saved-grid { max-height: 240px; }
+  .saved-section { flex-basis: auto; }
+}
+
 /* Visual dataframe merge workflow ------------------------------------ */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 24px;
@@ -1255,4 +1467,207 @@ textarea {
   .merge-modal-actions { align-items: stretch; flex-direction: column; }
   .merge-provenance-banner { grid-template-columns: 1fr; }
   .merge-provenance-source:last-child { justify-content: flex-start; text-align: left; }
+}
+
+/* Dense overview summary and multi-plot builder ----------------------- */
+.overview-dashboard {
+  gap: 8px;
+}
+
+.hero-panel {
+  min-height: 0;
+  padding: 9px 12px;
+  gap: 12px;
+}
+
+.profile-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.profile-summary .eyebrow {
+  margin: 0;
+  padding-right: 12px;
+  border-right: 1px solid var(--borderSoft);
+  white-space: nowrap;
+}
+
+.profile-summary > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.hero-panel .profile-summary h2 {
+  margin: 0;
+  font-size: 17px;
+  white-space: nowrap;
+}
+
+.hero-panel .profile-summary p {
+  margin: 0;
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero-panel .primary-btn {
+  padding: 6px 8px;
+}
+
+.merge-provenance-banner {
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 11px;
+}
+
+.merge-provenance-source,
+.merge-provenance-operation {
+  gap: 6px;
+}
+
+.merge-provenance-operation {
+  min-width: 130px;
+  padding: 4px 10px;
+}
+
+.metric-grid {
+  gap: 7px;
+}
+
+.metric-card {
+  min-height: 52px;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 11px;
+}
+
+.metric-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.metric-card strong {
+  display: inline;
+  margin: 0 5px 0 0;
+  font-size: 15px;
+}
+
+.metric-card small {
+  display: inline;
+}
+
+.metric-action-card {
+  flex-wrap: nowrap;
+}
+
+.metric-action-card .ghost-btn {
+  padding: 5px 7px;
+  white-space: nowrap;
+}
+
+.plot-builder-heading {
+  margin-bottom: 7px;
+}
+
+.shared-query {
+  display: grid;
+  grid-template-columns: 105px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid var(--borderSoft);
+  border-radius: 10px;
+  background: rgba(12, 16, 24, 0.45);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.shared-query small {
+  max-width: 250px;
+  font-size: 9.5px;
+}
+
+.plot-block-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 7px;
+}
+
+.plot-block {
+  overflow: hidden;
+  border: 1px solid var(--borderSoft);
+  border-radius: 11px;
+  background: rgba(21, 26, 39, 0.48);
+}
+
+.plot-block > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.plot-block > summary::-webkit-details-marker {
+  display: none;
+}
+
+.plot-block > summary::before {
+  content: '+';
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.plot-block[open] > summary::before {
+  content: '−';
+  color: var(--accent);
+}
+
+.plot-block > summary span {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.plot-block > summary small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.plot-block-body {
+  padding: 0 8px 8px;
+  border-top: 1px solid var(--borderSoft);
+}
+
+.plot-block-toolbar {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto auto auto;
+  gap: 5px;
+  align-items: center;
+  padding-top: 7px;
+  margin-bottom: 6px;
+}
+
+.plot-block .preview-placeholder {
+  min-height: 100px;
+}
+
+.plot-block .plot-card {
+  height: min(42vh, 330px);
+}
+
+@media (max-width: 720px) {
+  .profile-summary, .profile-summary > div { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .profile-summary .eyebrow { padding-right: 0; border-right: 0; }
+  .shared-query { grid-template-columns: 1fr; }
+  .shared-query small { max-width: none; }
+  .plot-block-toolbar { grid-template-columns: 1fr auto auto auto; }
 }

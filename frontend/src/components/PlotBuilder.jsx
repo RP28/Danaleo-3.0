@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Save, SlidersHorizontal } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Plus, Save, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 
 const numericPlotTypes = [
@@ -61,12 +61,16 @@ function uniqueValues(values) {
   return values.filter((value, index, arr) => value && arr.indexOf(value) === index);
 }
 
-export default function PlotBuilder({
+function LocalPlotBlock({
   column,
   stats,
   sessionId,
   numericColumns,
   categoricalColumns,
+  localQuery,
+  blockNumber,
+  canRemove,
+  onRemove,
   onPreview,
   onSaved,
   onError
@@ -76,12 +80,12 @@ export default function PlotBuilder({
   }, [stats?.kind]);
 
   const [plotType, setPlotType] = useState(actualTypes[0]?.[0] || 'histogram');
-  const [localQuery, setLocalQuery] = useState('');
   const [figure, setFigure] = useState(null);
   const [title, setTitle] = useState('');
   const [remark, setRemark] = useState('');
   const [include, setInclude] = useState(true);
   const [controls, setControls] = useState(() => defaultControls());
+  const [expanded, setExpanded] = useState(true);
 
   const groupOptions = useMemo(() => {
     return categoricalColumns.filter((c) => c !== column);
@@ -123,15 +127,6 @@ export default function PlotBuilder({
       subplot_columns: []
     }));
   }, [column, groupOptions]);
-
-  if (!column || !stats) {
-    return (
-      <section className="plot-builder">
-        <h2>Select a column to begin</h2>
-        <p className="muted">Plots, saved charts, and notebook export options will appear here.</p>
-      </section>
-    );
-  }
 
   function updateControl(key, value) {
     setControls((prev) => ({ ...prev, [key]: value }));
@@ -235,16 +230,15 @@ export default function PlotBuilder({
   }
 
   return (
-    <section className="plot-builder">
-      <div className="builder-header">
-        <div>
-          <p className="eyebrow">
-            <SlidersHorizontal size={14} /> Local plot builder
-          </p>
-          <h2>{column}</h2>
-        </div>
-
-        <div className="row compact">
+    <details className="plot-block" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+      <summary>
+        <span>
+          <strong>Plot {blockNumber}</strong>
+          <small>{actualTypes.find(([key]) => key === plotType)?.[1]}</small>
+        </span>
+      </summary>
+      <div className="plot-block-body">
+        <div className="plot-block-toolbar">
           <select value={plotType} onChange={(e) => setPlotType(e.target.value)}>
             {actualTypes.map(([key, label]) => (
               <option key={key} value={key} disabled={groupedPlotTypes.has(key) && !canUseGroupedPlots}>
@@ -261,19 +255,14 @@ export default function PlotBuilder({
           <button className="primary-btn" type="button" onClick={save}>
             <Save size={16} /> Save
           </button>
+          {canRemove && (
+            <button className="icon-btn danger-btn" type="button" onClick={onRemove} aria-label={`Remove plot ${blockNumber}`}>
+              <Trash2 size={14} />
+            </button>
+          )}
         </div>
-      </div>
 
-      <div className="builder-controls">
-        <label className="wide-control">
-          Local filter query
-          <input
-            value={localQuery}
-            onChange={(e) => setLocalQuery(e.target.value)}
-            placeholder={`Optional, e.g. \`${column}\` > 0`}
-          />
-        </label>
-
+        <div className="builder-controls">
         {isRelationshipPlot && (
           <label>
             Compare with
@@ -459,7 +448,7 @@ export default function PlotBuilder({
             </select>
           </label>
         )}
-      </div>
+        </div>
 
       <details className="soft-details">
         <summary>Visual settings</summary>
@@ -578,6 +567,87 @@ export default function PlotBuilder({
           Local filters only affect this plot, not the session dataframe.
         </div>
       )}
+      </div>
+    </details>
+  );
+}
+
+export default function PlotBuilder({
+  column,
+  stats,
+  sessionId,
+  numericColumns,
+  categoricalColumns,
+  onPreview,
+  onSaved,
+  onError
+}) {
+  const [localQuery, setLocalQuery] = useState('');
+  const [plotBlocks, setPlotBlocks] = useState([1]);
+  const nextBlockId = useRef(2);
+
+  useEffect(() => {
+    setLocalQuery('');
+    setPlotBlocks([1]);
+    nextBlockId.current = 2;
+  }, [column, sessionId]);
+
+  if (!column || !stats) {
+    return (
+      <section className="plot-builder">
+        <h2>Select a column to begin</h2>
+        <p className="muted">Plots, saved charts, and notebook export options will appear here.</p>
+      </section>
+    );
+  }
+
+  function addPlotBlock() {
+    const id = nextBlockId.current;
+    nextBlockId.current += 1;
+    setPlotBlocks((current) => [...current, id]);
+  }
+
+  return (
+    <section className="plot-builder">
+      <div className="builder-header plot-builder-heading">
+        <div>
+          <p className="eyebrow"><SlidersHorizontal size={14} /> Local plot builder</p>
+          <h2>{column}</h2>
+        </div>
+        <button className="primary-btn" type="button" onClick={addPlotBlock}>
+          <Plus size={15} /> Add plot
+        </button>
+      </div>
+
+      <label className="shared-query">
+        <span>Shared local query</span>
+        <input
+          value={localQuery}
+          onChange={(event) => setLocalQuery(event.target.value)}
+          placeholder={`Optional, e.g. \`${column}\` > 0`}
+        />
+        <small>Applied to every plot block below without changing the session dataframe.</small>
+      </label>
+
+      <div className="plot-block-list">
+        {plotBlocks.map((blockId, index) => (
+          <LocalPlotBlock
+            key={blockId}
+            column={column}
+            stats={stats}
+            sessionId={sessionId}
+            numericColumns={numericColumns}
+            categoricalColumns={categoricalColumns}
+            localQuery={localQuery}
+            blockNumber={index + 1}
+            canRemove={plotBlocks.length > 1}
+            onRemove={() => setPlotBlocks((current) => current.filter((id) => id !== blockId))}
+            onPreview={onPreview}
+            onSaved={onSaved}
+            onError={onError}
+          />
+        ))}
+      </div>
     </section>
   );
 }

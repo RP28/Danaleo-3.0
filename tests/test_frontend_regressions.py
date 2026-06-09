@@ -225,6 +225,31 @@ def test_plot_builder_keeps_plot_filter_local_and_sends_export_metadata():
     assert "api.savePlot" in source
 
 
+def test_plot_builder_supports_multiple_collapsible_plots_for_one_shared_query():
+    source = read_frontend("components/PlotBuilder.jsx")
+    styles = read_frontend("styles.css")
+
+    assert "function LocalPlotBlock" in source
+    assert "const [plotBlocks, setPlotBlocks] = useState([1])" in source
+    assert "Shared local query" in source
+    assert "Add plot" in source
+    assert 'className="plot-block"' in source
+    assert "open={expanded}" in source
+    assert "localQuery={localQuery}" in source
+    assert ".plot-block-list" in styles
+    assert ".shared-query" in styles
+
+
+def test_overview_uses_dense_profile_summary():
+    overview = read_frontend("components/OverviewDashboard.jsx")
+    styles = read_frontend("styles.css")
+
+    assert 'className="profile-summary"' in overview
+    assert ".profile-summary" in styles
+    assert ".merge-provenance-banner" in styles
+    assert ".metric-card" in styles
+
+
 def test_saved_plots_can_toggle_export_state():
     source = read_frontend("components/SavedPlots.jsx")
 
@@ -233,6 +258,18 @@ def test_saved_plots_can_toggle_export_state():
     assert "onWorkspaceUpdate(data)" in source
     assert "In export" in source
     assert "Skip export" in source
+
+
+def test_saved_plots_live_below_the_sidebar_column_list():
+    app = read_frontend("App.jsx")
+    sidebar = read_frontend("components/Sidebar.jsx")
+    saved_plots = read_frontend("components/SavedPlots.jsx")
+
+    assert "savedPlots={(" in app
+    assert "{savedPlots}" in sidebar
+    assert sidebar.index("column-list") < sidebar.index("{savedPlots}")
+    assert "saved-card-main" in saved_plots
+    assert "saved-figure-panel" in app
 
 
 def test_toasts_auto_dismiss_after_five_seconds():
