@@ -161,6 +161,43 @@ def test_multi_csv_upload_is_atomic_when_any_file_is_invalid(csv_bytes: bytes):
     assert [dataset["csv_name"] for dataset in workspace["datasets"]] == ["existing.csv"]
 
 
+def test_merge_api_preview_create_detail_and_error_paths():
+    client = TestClient(app)
+    left = upload_csv(client, b"id,a\n1,A\n2,B\n3,C\n", "left.csv")
+    right = upload_csv(client, b"customer_id,b\n2,X\n3,Y\n4,Z\n", "right.csv")
+    payload = {
+        "left_session_id": left["active_session_id"],
+        "right_session_id": right["active_session_id"],
+        "how": "outer",
+        "left_on": ["id"],
+        "right_on": ["customer_id"],
+        "suffixes": ["_left", "_right"],
+        "validate": "one_to_one",
+        "name": "customer_orders",
+    }
+
+    detail = client.get(f"/api/datasets/{left['active_dataset_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["session_options"][0]["columns"] == ["id", "a"]
+
+    preview = client.post("/api/merges/preview", json=payload)
+    assert preview.status_code == 200
+    assert preview.json()["result_rows"] == 4
+    assert preview.json()["matched_rows"] == 2
+
+    created = client.post("/api/merges", json=payload)
+    assert created.status_code == 200
+    assert created.json()["csv_name"] == "customer_orders.csv"
+    assert len(created.json()["datasets"]) == 3
+    assert created.json()["datasets"][-1]["provenance"]["type"] == "merge"
+
+    bad_detail = client.get("/api/datasets/missing")
+    bad_merge = client.post("/api/merges/preview", json={**payload, "left_on": ["missing"]})
+    assert bad_detail.status_code == 400
+    assert bad_merge.status_code == 400
+    assert "Left join key not found" in bad_merge.json()["detail"]
+
+
 def test_api_end_to_end_workspace_flow(csv_bytes: bytes):
     client = TestClient(app)
 

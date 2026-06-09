@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, BarChart3, Database, Grid3X3 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, Database, GitMerge, Grid3X3 } from 'lucide-react';
 import DatasetPlotBuilder from './DatasetPlotBuilder.jsx';
 
 function Metric({ icon, label, value, detail }) {
@@ -14,7 +14,7 @@ function Metric({ icon, label, value, detail }) {
   );
 }
 
-export default function OverviewDashboard({ session, onSelectColumn, onOpenExplore, onApply, onSaved, onError }) {
+export default function OverviewDashboard({ session, provenance, onSelectColumn, onOpenExplore, onApply, onSaved, onError }) {
   const profile = session.profile;
   const columns = session.columns;
   const interestingColumns = [...columns]
@@ -33,6 +33,24 @@ export default function OverviewDashboard({ session, onSelectColumn, onOpenExplo
           Explore columns <ArrowRight size={16} />
         </button>
       </section>
+
+      {provenance?.type === 'merge' && (
+        <section className="merge-provenance-banner">
+          <div className="merge-provenance-source">
+            <Database size={17} />
+            <span><strong>{provenance.left_dataset_name}</strong><small>{provenance.left_session_name}</small></span>
+          </div>
+          <div className="merge-provenance-operation">
+            <GitMerge size={18} />
+            <strong>{provenance.how === 'outer' ? 'full outer' : provenance.how} join</strong>
+            <small>{provenance.left_on.length ? provenance.left_on.map((key, index) => `${key} → ${provenance.right_on[index]}`).join(', ') : 'cross product'}</small>
+          </div>
+          <div className="merge-provenance-source">
+            <Database size={17} />
+            <span><strong>{provenance.right_dataset_name}</strong><small>{provenance.right_session_name}</small></span>
+          </div>
+        </section>
+      )}
 
       <section className="metric-grid">
         <Metric icon={<Database size={18} />} label="Rows" value={profile.rows.toLocaleString()} detail={`${profile.columns} columns`} />

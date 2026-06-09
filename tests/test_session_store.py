@@ -404,6 +404,202 @@ def test_reset_releases_all_dataset_sources():
     assert workspace_store.workspace_summary()["ready"] is False
 
 
+@pytest.mark.parametrize(
+    ("how", "result_rows", "matched", "left_only", "right_only"),
+    [
+        ("inner", 2, 2, 0, 0),
+        ("left", 3, 2, 1, 0),
+        ("right", 3, 2, 0, 1),
+        ("outer", 4, 2, 1, 1),
+        ("cross", 9, 9, 0, 0),
+    ],
+)
+def test_merge_preview_supports_join_types_without_mutating_active_dataset(
+    how, result_rows, matched, left_only, right_only
+):
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(b"id,left_value\n1,A\n2,B\n3,C\n", "left.csv")
+    left_dataset_id = left["active_dataset_id"]
+    left_session_id = left["active_session_id"]
+    right = workspace_store.load_csv(b"id,right_value\n2,X\n3,Y\n4,Z\n", "right.csv")
+    right_dataset_id = right["active_dataset_id"]
+
+    preview = workspace_store.preview_merge(
+        left_session_id,
+        right["active_session_id"],
+        how,
+        ["id"],
+        ["id"],
+        ["_left", "_right"],
+    )
+
+    assert preview["result_rows"] == result_rows
+    assert preview["matched_rows"] == matched
+    assert preview["left_only_rows"] == left_only
+    assert preview["right_only_rows"] == right_only
+    assert workspace_store.active_dataset_id == right_dataset_id
+    assert len(workspace_store.datasets) == 2
+    assert len(workspace_store.datasets[left_dataset_id].sessions[left_session_id].data) == 3
+
+
+def test_create_merge_makes_independent_derived_dataset_with_provenance():
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(b"id,value\n1,A\n2,B\n3,C\n", "left.csv")
+    left_id = left["active_dataset_id"]
+    right = workspace_store.load_csv(b"customer_id,value\n2,X\n3,Y\n4,Z\n", "right.csv")
+    right_id = right["active_dataset_id"]
+
+    merged = workspace_store.create_merged_dataset(
+        left["active_session_id"],
+        right["active_session_id"],
+        "outer",
+        ["id"],
+        ["customer_id"],
+        ["_customer", "_order"],
+        "one_to_one",
+        "../combined",
+    )
+    merged_id = merged["active_dataset_id"]
+
+    assert merged["csv_name"] == "combined.csv"
+    assert merged["active_session"]["name"] == "Merged result"
+    assert merged["active_session"]["overview"] == {
+        **merged["active_session"]["overview"],
+        "rows": 4,
+        "columns": 4,
+    }
+    assert merged["datasets"][-1]["provenance"]["how"] == "outer"
+    assert merged["datasets"][-1]["provenance"]["left_dataset_name"] == "left.csv"
+    assert merged["datasets"][-1]["provenance"]["right_dataset_name"] == "right.csv"
+
+    workspace_store.delete_dataset(left_id)
+    workspace_store.delete_dataset(right_id)
+    assert workspace_store.active_dataset_id == merged_id
+    assert workspace_store.require_session().data["id"].notna().sum() == 3
+
+
+def test_merge_supports_multiple_keys_and_session_snapshots():
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(
+        b"id,year,value\n1,2024,A\n1,2025,B\n2,2025,C\n",
+        "left.csv",
+    )
+    left_branch = workspace_store.create_session("Filtered left", left["active_session_id"])[
+        "active_session_id"
+    ]
+    workspace_store.apply_session_operation(left_branch, "filter_rows", {"query": "year == 2025"})
+    right = workspace_store.load_csv(
+        b"customer_id,year,score\n1,2024,10\n1,2025,20\n2,2025,30\n",
+        "right.csv",
+    )
+
+    preview = workspace_store.preview_merge(
+        left_branch,
+        right["active_session_id"],
+        "inner",
+        ["id", "year"],
+        ["customer_id", "year"],
+        ["_left", "_right"],
+        "one_to_one",
+    )
+
+    assert preview["result_rows"] == 2
+    assert preview["matched_rows"] == 2
+
+
+@pytest.mark.parametrize(
+    ("left_on", "right_on", "suffixes", "validate", "message"),
+    [
+        ([], [], ["_left", "_right"], None, "Select at least one join key"),
+        (["id"], ["id", "other"], ["_left", "_right"], None, "same count"),
+        (["missing"], ["id"], ["_left", "_right"], None, "Left join key not found"),
+        (["id"], ["missing"], ["_left", "_right"], None, "Right join key not found"),
+        (["id", "id"], ["id", "other"], ["_left", "_right"], None, "only be selected once"),
+        (["id"], ["id"], ["_same", "_same"], None, "different column suffixes"),
+        (["id"], ["id"], ["_left", "_right"], "invalid", "Unsupported relationship"),
+    ],
+)
+def test_merge_rejects_invalid_configuration(left_on, right_on, suffixes, validate, message):
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(b"id,other\n1,A\n2,B\n", "left.csv")
+    right = workspace_store.load_csv(b"id,other\n1,X\n2,Y\n", "right.csv")
+
+    with pytest.raises(ValueError, match=message):
+        workspace_store.preview_merge(
+            left["active_session_id"],
+            right["active_session_id"],
+            "inner",
+            left_on,
+            right_on,
+            suffixes,
+            validate,
+        )
+
+
+def test_merge_relationship_validation_and_unknown_inputs_are_rejected():
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(b"id,value\n1,A\n1,B\n", "left.csv")
+    right = workspace_store.load_csv(b"id,score\n1,10\n2,20\n", "right.csv")
+
+    with pytest.raises(Exception, match="not a one-to-one merge"):
+        workspace_store.preview_merge(
+            left["active_session_id"],
+            right["active_session_id"],
+            "inner",
+            ["id"],
+            ["id"],
+            ["_left", "_right"],
+            "one_to_one",
+        )
+    with pytest.raises(ValueError, match="Unsupported join type"):
+        workspace_store.preview_merge(
+            left["active_session_id"],
+            right["active_session_id"],
+            "sideways",
+            ["id"],
+            ["id"],
+            ["_left", "_right"],
+        )
+    with pytest.raises(ValueError, match="Session not found"):
+        workspace_store.preview_merge(
+            "missing",
+            right["active_session_id"],
+            "inner",
+            ["id"],
+            ["id"],
+            ["_left", "_right"],
+        )
+
+
+def test_merge_dataset_detail_and_progress_round_trip_preserve_provenance():
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(b"id,a\n1,A\n2,B\n", "left.csv")
+    right = workspace_store.load_csv(b"id,b\n2,X\n3,Y\n", "right.csv")
+    merged = workspace_store.create_merged_dataset(
+        left["active_session_id"],
+        right["active_session_id"],
+        "outer",
+        ["id"],
+        ["id"],
+        ["_left", "_right"],
+        name="joined.csv",
+    )
+    merged_id = merged["active_dataset_id"]
+
+    detail = workspace_store.dataset_detail(merged_id)
+    assert detail["session_options"][0]["columns"] == ["id", "a", "b"]
+    assert detail["provenance"]["diagnostics"]["result_rows"] == 3
+
+    restored_store = WorkspaceStore()
+    restored = restored_store.import_project(workspace_store.export_project())
+    restored_merged = next(dataset for dataset in restored["datasets"] if dataset["id"] == merged_id)
+    assert restored_merged["provenance"]["type"] == "merge"
+    assert restored_merged["provenance"]["how"] == "outer"
+    assert restored_store.datasets[merged_id].sessions[
+        restored_merged["active_session_id"]
+    ].data.shape == (3, 3)
+
+
 def test_delete_plot_removes_only_the_requested_saved_plot(loaded_store: WorkspaceStore):
     base_id = loaded_store.active_session_id
 

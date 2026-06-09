@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from danaleo.server.models import (
     ActivateDatasetRequest,
     CreateSessionRequest,
+    MergeRequest,
     PlotRequest,
     SavePlotRequest,
     UpdatePlotRequest,
@@ -37,3 +38,9 @@ def test_request_defaults_are_independent_and_export_defaults_are_stable():
 
     dataset = ActivateDatasetRequest(dataset_id="dataset-1")
     assert dataset.dataset_id == "dataset-1"
+
+    merge = MergeRequest(left_session_id="left", right_session_id="right")
+    assert merge.how == "inner"
+    assert merge.suffixes == ["_left", "_right"]
+    assert merge.left_on == []
+    assert merge.relationship is None

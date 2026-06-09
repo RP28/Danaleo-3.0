@@ -23,7 +23,16 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dataset_id: datasetId })
   }),
+  datasetDetail: (datasetId) => request(`/api/datasets/${datasetId}`),
   deleteDataset: (datasetId) => request(`/api/datasets/${datasetId}`, { method: 'DELETE' }),
+  previewMerge: (payload) => request('/api/merges/preview', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }),
+  createMerge: (payload) => request('/api/merges', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }),
   loadProgress: (formData) => request('/api/progress/load', { method: 'POST', body: formData }),
   createSession: (name, parentId) => request('/api/sessions', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -1,7 +1,10 @@
-import { FilePlus2, X } from 'lucide-react';
+import { FilePlus2, GitMerge, X } from 'lucide-react';
+import { useState } from 'react';
 import { api } from '../api.js';
+import MergeDatasetsModal from './MergeDatasetsModal.jsx';
 
 export default function DatasetTabs({ workspace, onWorkspace, onError }) {
+  const [showMerge, setShowMerge] = useState(false);
   async function uploadFiles(event) {
     const files = Array.from(event.target.files || []);
     event.target.value = '';
@@ -44,7 +47,7 @@ export default function DatasetTabs({ workspace, onWorkspace, onError }) {
           >
             <button type="button" className="dataset-tab-main" onClick={() => activate(dataset.id)}>
               <strong>{dataset.csv_name}</strong>
-              <small>{dataset.rows.toLocaleString()} rows · {dataset.columns} cols</small>
+              <small>{dataset.provenance?.type === 'merge' ? 'merge result · ' : ''}{dataset.rows.toLocaleString()} rows · {dataset.columns} cols</small>
             </button>
             <button
               type="button"
@@ -57,10 +60,23 @@ export default function DatasetTabs({ workspace, onWorkspace, onError }) {
           </div>
         ))}
       </div>
+      {workspace.datasets.length > 1 && (
+        <button className="ghost-btn dataset-merge" onClick={() => setShowMerge(true)}>
+          <GitMerge size={15} /> Merge
+        </button>
+      )}
       <label className="ghost-btn dataset-add">
         <FilePlus2 size={15} /> Add CSVs
         <input type="file" accept=".csv,text/csv" multiple onChange={uploadFiles} />
       </label>
+      {showMerge && (
+        <MergeDatasetsModal
+          workspace={workspace}
+          onClose={() => setShowMerge(false)}
+          onWorkspace={onWorkspace}
+          onError={onError}
+        />
+      )}
     </nav>
   );
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CreateSessionRequest(BaseModel):
@@ -16,6 +16,19 @@ class ActivateSessionRequest(BaseModel):
 
 class ActivateDatasetRequest(BaseModel):
     dataset_id: str
+
+
+class MergeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    left_session_id: str
+    right_session_id: str
+    how: str = "inner"
+    left_on: list[str] = Field(default_factory=list)
+    right_on: list[str] = Field(default_factory=list)
+    suffixes: list[str] = Field(default_factory=lambda: ["_left", "_right"])
+    relationship: str | None = Field(default=None, alias="validate")
+    name: str = "merged.csv"
 
 
 class RenameSessionRequest(BaseModel):

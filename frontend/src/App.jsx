@@ -229,6 +229,7 @@ export default function App() {
         {activeView === 'overview' && (
           <OverviewDashboard
             session={activeSession}
+            provenance={workspace.datasets.find((dataset) => dataset.id === workspace.active_dataset_id)?.provenance}
             onSelectColumn={exploreColumn}
             onOpenExplore={exploreColumn}
             onApply={(operation, params) => handleWorkspaceUpdate(api.applyOperation(activeSessionId, operation, params))}

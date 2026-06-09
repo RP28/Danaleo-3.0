@@ -8,6 +8,8 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload mul
 
 * Upload multiple CSV files into independent dataset tabs
 * Save and restore every open CSV, session, and plot in one `.danaleo` workspace
+* Visually merge two dataset session snapshots with inner, left, right, full outer, or cross joins
+* Preview merge match diagnostics and validate one-to-one, one-to-many, or many-to-one relationships
 * Optional sampling during upload
 * Column overview and column-level statistics
 * Overview-first dataset profile with quality flags, correlations, and row preview
@@ -26,9 +28,10 @@ It runs a Python FastAPI backend and a React UI on localhost. You can upload mul
 * Scatter, hexbin, line relationship, correlation heatmap, and missing-values plots
 * Shared chart title, grid, log-axis, sorting, orientation, marker, and opacity controls
 * Save plots with export notes
-* Include or skip saved plots during notebook export
+* Include or skip saved plots across every dataset tab during notebook export
 * Export EDA workflow to `.ipynb`
 * Exported notebooks use concise pandas, NumPy, Matplotlib, and Seaborn code without requiring Danaleo
+* Exported merged datasets recreate available join chains with direct `pd.merge(...)` code
 * Local browser-based UI
 
 ## Requirements

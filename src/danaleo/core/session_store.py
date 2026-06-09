@@ -62,6 +62,7 @@ class DatasetRecord:
     active_session_id: str
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
     saved_plots: dict[str, PlotRecord] = field(default_factory=dict)
+    provenance: dict[str, Any] | None = None
 
 
 class WorkspaceStore:
@@ -175,13 +176,24 @@ class WorkspaceStore:
             sample_frac,
             random_state,
         )
+        return self._register_dataset(df, tmp_path, filename, sample_info)
 
+    def _register_dataset(
+        self,
+        df: pd.DataFrame,
+        csv_path: str,
+        filename: str,
+        sample_info: dict[str, Any] | None = None,
+        session_name: str = "Base Session",
+        creation_label: str = "Created Base Session",
+        provenance: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         dataset_id = uuid4().hex
         base_id = uuid4().hex
         created_time = self._tick()
         base_session = SessionRecord(
             id=base_id,
-            name="Base Session",
+            name=session_name,
             parent_id=None,
             created_time=created_time,
             created_overview=dataframe_overview(df),
@@ -190,7 +202,7 @@ class WorkspaceStore:
                 OperationRecord(
                     id=uuid4().hex,
                     operation_type="created_session",
-                    label="Created Base Session",
+                    label=creation_label,
                     params={},
                     time=created_time,
                 )
@@ -199,11 +211,12 @@ class WorkspaceStore:
         )
         self.datasets[dataset_id] = DatasetRecord(
             id=dataset_id,
-            csv_path=tmp_path,
+            csv_path=csv_path,
             csv_name=filename,
             sample_info=sample_info,
             active_session_id=base_id,
             sessions={base_id: base_session},
+            provenance=provenance,
         )
         self.active_dataset_id = dataset_id
         return self.workspace_summary()
@@ -271,6 +284,12 @@ class WorkspaceStore:
                 self.active_dataset_id = dataset.id
                 return
 
+    def _find_session(self, session_id: str) -> tuple[DatasetRecord, SessionRecord]:
+        for dataset in self.datasets.values():
+            if session_id in dataset.sessions:
+                return dataset, dataset.sessions[session_id]
+        raise ValueError("Session not found")
+
     def require_session(self, session_id: str | None = None) -> SessionRecord:
         if not self.ready:
             raise ValueError("Upload a CSV file first")
@@ -280,6 +299,171 @@ class WorkspaceStore:
         if not sid or sid not in self.sessions:
             raise ValueError("Session not found")
         return self.sessions[sid]
+
+    def dataset_detail(self, dataset_id: str) -> dict[str, Any]:
+        if dataset_id not in self.datasets:
+            raise ValueError("Dataset not found")
+        dataset = self.datasets[dataset_id]
+        return {
+            **self.dataset_summary(dataset),
+            "session_options": [
+                {
+                    "id": session.id,
+                    "name": session.name,
+                    "rows": len(session.data),
+                    "columns": [str(column) for column in session.data.columns],
+                }
+                for session in sorted(dataset.sessions.values(), key=lambda item: item.created_time)
+            ],
+        }
+
+    def _merge_frames(
+        self,
+        left_session_id: str,
+        right_session_id: str,
+        how: str,
+        left_on: list[str],
+        right_on: list[str],
+        suffixes: list[str],
+        validate: str | None,
+    ) -> tuple[pd.DataFrame, dict[str, Any], DatasetRecord, DatasetRecord]:
+        if left_session_id == right_session_id:
+            raise ValueError("Choose two different sessions to merge")
+        left_dataset, left_session = self._find_session(left_session_id)
+        right_dataset, right_session = self._find_session(right_session_id)
+        allowed_how = {"inner", "left", "right", "outer", "cross"}
+        if how not in allowed_how:
+            raise ValueError(f"Unsupported join type: {how}")
+
+        if how == "cross":
+            left_keys: list[str] = []
+            right_keys: list[str] = []
+        else:
+            left_keys = [str(column) for column in left_on if str(column)]
+            right_keys = [str(column) for column in right_on if str(column)]
+            if not left_keys or not right_keys:
+                raise ValueError("Select at least one join key for each dataset")
+            if len(left_keys) != len(right_keys):
+                raise ValueError("Left and right join keys must have the same count")
+            if len(set(left_keys)) != len(left_keys) or len(set(right_keys)) != len(right_keys):
+                raise ValueError("Each join key column can only be selected once")
+            missing_left = [column for column in left_keys if column not in left_session.data.columns]
+            missing_right = [column for column in right_keys if column not in right_session.data.columns]
+            if missing_left:
+                raise ValueError(f"Left join key not found: {missing_left[0]}")
+            if missing_right:
+                raise ValueError(f"Right join key not found: {missing_right[0]}")
+
+        clean_suffixes = [str(value) for value in suffixes]
+        if len(clean_suffixes) != 2 or clean_suffixes[0] == clean_suffixes[1]:
+            raise ValueError("Provide two different column suffixes")
+        allowed_validate = {None, "one_to_one", "one_to_many", "many_to_one", "many_to_many"}
+        if validate not in allowed_validate:
+            raise ValueError(f"Unsupported relationship validation: {validate}")
+
+        indicator = "__danaleo_merge_status__"
+        while indicator in left_session.data.columns or indicator in right_session.data.columns:
+            indicator = f"_{indicator}"
+        merge_args: dict[str, Any] = {
+            "how": how,
+            "suffixes": tuple(clean_suffixes),
+            "indicator": indicator,
+        }
+        if validate:
+            merge_args["validate"] = validate
+        if how != "cross":
+            merge_args["left_on"] = left_keys
+            merge_args["right_on"] = right_keys
+
+        result = pd.merge(left_session.data, right_session.data, **merge_args)
+        counts = result[indicator].value_counts().to_dict()
+        result = result.drop(columns=[indicator])
+        diagnostics = {
+            "left_rows": len(left_session.data),
+            "right_rows": len(right_session.data),
+            "result_rows": len(result),
+            "result_columns": len(result.columns),
+            "matched_rows": int(counts.get("both", 0)),
+            "left_only_rows": int(counts.get("left_only", 0)),
+            "right_only_rows": int(counts.get("right_only", 0)),
+            "columns": [str(column) for column in result.columns],
+            "preview": dataset_profile(result, preview_rows=8)["preview"],
+        }
+        return result, diagnostics, left_dataset, right_dataset
+
+    def preview_merge(
+        self,
+        left_session_id: str,
+        right_session_id: str,
+        how: str,
+        left_on: list[str],
+        right_on: list[str],
+        suffixes: list[str],
+        validate: str | None = None,
+    ) -> dict[str, Any]:
+        _, diagnostics, _, _ = self._merge_frames(
+            left_session_id,
+            right_session_id,
+            how,
+            left_on,
+            right_on,
+            suffixes,
+            validate,
+        )
+        return diagnostics
+
+    def create_merged_dataset(
+        self,
+        left_session_id: str,
+        right_session_id: str,
+        how: str,
+        left_on: list[str],
+        right_on: list[str],
+        suffixes: list[str],
+        validate: str | None = None,
+        name: str = "merged.csv",
+    ) -> dict[str, Any]:
+        result, diagnostics, left_dataset, right_dataset = self._merge_frames(
+            left_session_id,
+            right_session_id,
+            how,
+            left_on,
+            right_on,
+            suffixes,
+            validate,
+        )
+        clean_name = Path(name.strip() or "merged.csv").name
+        if not clean_name.lower().endswith(".csv"):
+            clean_name += ".csv"
+        with NamedTemporaryFile(delete=False, suffix=".csv", prefix="danaleo_merge_") as tmp:
+            result.to_csv(tmp.name, index=False)
+            tmp_path = tmp.name
+
+        provenance = {
+            "type": "merge",
+            "how": how,
+            "left_dataset_id": left_dataset.id,
+            "left_dataset_name": left_dataset.csv_name,
+            "left_session_id": left_session_id,
+            "left_session_name": left_dataset.sessions[left_session_id].name,
+            "right_dataset_id": right_dataset.id,
+            "right_dataset_name": right_dataset.csv_name,
+            "right_session_id": right_session_id,
+            "right_session_name": right_dataset.sessions[right_session_id].name,
+            "left_on": left_on if how != "cross" else [],
+            "right_on": right_on if how != "cross" else [],
+            "suffixes": suffixes,
+            "validate": validate,
+            "diagnostics": {key: value for key, value in diagnostics.items() if key not in {"preview", "columns"}},
+        }
+        return self._register_dataset(
+            result,
+            tmp_path,
+            clean_name,
+            session_name="Merged result",
+            creation_label=f"Created {how} join result",
+            provenance=provenance,
+        )
 
     def create_session(self, name: str, parent_id: str | None = None) -> dict[str, Any]:
         parent = self.require_session(parent_id)
@@ -461,6 +645,7 @@ class WorkspaceStore:
             "id": dataset.id,
             "csv_name": dataset.csv_name,
             "sample_info": dataset.sample_info,
+            "provenance": dataset.provenance,
             "active_session_id": dataset.active_session_id,
             "source_path": f"datasets/{dataset.id}/source.csv",
             "sessions": [
@@ -629,6 +814,7 @@ class WorkspaceStore:
             active_session_id=str(active_session_id),
             sessions=records,
             saved_plots=plots,
+            provenance=dict(raw.get("provenance") or {}) or None,
         )
 
     def import_project(self, project_bytes: bytes) -> dict[str, Any]:
@@ -706,6 +892,7 @@ class WorkspaceStore:
             "id": dataset.id,
             "csv_name": dataset.csv_name,
             "sample_info": dataset.sample_info,
+            "provenance": dataset.provenance,
             "active_session_id": dataset.active_session_id,
             "rows": len(active.data),
             "columns": len(active.data.columns),

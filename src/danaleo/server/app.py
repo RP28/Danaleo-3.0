@@ -14,6 +14,7 @@ from danaleo.server.models import (
     ActivateSessionRequest,
     ActivateDatasetRequest,
     CreateSessionRequest,
+    MergeRequest,
     OperationRequest,
     PlotRequest,
     RenameSessionRequest,
@@ -112,6 +113,47 @@ def activate_dataset(payload: ActivateDatasetRequest) -> dict:
 def delete_dataset(dataset_id: str) -> dict:
     try:
         return store.delete_dataset(dataset_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/datasets/{dataset_id}")
+def dataset_detail(dataset_id: str) -> dict:
+    try:
+        return store.dataset_detail(dataset_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/merges/preview")
+def preview_merge(payload: MergeRequest) -> dict:
+    try:
+        return store.preview_merge(
+            payload.left_session_id,
+            payload.right_session_id,
+            payload.how,
+            payload.left_on,
+            payload.right_on,
+            payload.suffixes,
+            payload.relationship,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/merges")
+def create_merge(payload: MergeRequest) -> dict:
+    try:
+        return store.create_merged_dataset(
+            payload.left_session_id,
+            payload.right_session_id,
+            payload.how,
+            payload.left_on,
+            payload.right_on,
+            payload.suffixes,
+            payload.relationship,
+            payload.name,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -261,6 +261,31 @@ def test_dataset_tabs_support_upload_activation_and_deletion():
     assert "Clear workspace" in app
 
 
+def test_visual_merge_workflow_exposes_join_types_keys_preview_and_creation():
+    tabs = read_frontend("components/DatasetTabs.jsx")
+    merge = read_frontend("components/MergeDatasetsModal.jsx")
+    api = read_frontend("api.js")
+    styles = read_frontend("styles.css")
+
+    assert "MergeDatasetsModal" in tabs
+    assert "workspace.datasets.length > 1" in tabs
+    for join_type in ["inner", "left", "right", "outer", "cross"]:
+        assert f"value: '{join_type}'" in merge
+    assert "left_on" in merge
+    assert "right_on" in merge
+    assert "one_to_one" in merge
+    assert "matched_rows" in merge
+    assert "left_only_rows" in merge
+    assert "right_only_rows" in merge
+    assert "api.previewMerge(payload)" in merge
+    assert "api.createMerge(payload)" in merge
+    assert "commonColumn" in merge
+    assert "/api/merges/preview" in api
+    assert "/api/merges" in api
+    assert ".merge-visual" in styles
+    assert "merge-provenance-banner" in read_frontend("components/OverviewDashboard.jsx")
+
+
 def test_recent_session_operations_panel_removed_from_column_details():
     source = read_frontend("components/ColumnDetails.jsx")
 

@@ -198,7 +198,7 @@ def test_export_replays_drop_duplicates_operation():
     assert "df = df.drop_duplicates().copy()" in combined_sources
 
 
-def test_export_describes_dataset_level_plot_scope(csv_bytes: bytes):
+def test_export_keeps_dataset_level_plot_markdown_minimal(csv_bytes: bytes):
     workspace_store = WorkspaceStore()
     workspace_store.load_csv(csv_bytes, "customers.csv")
     workspace_store.save_plot(
@@ -210,7 +210,8 @@ def test_export_describes_dataset_level_plot_scope(csv_bytes: bytes):
 
     combined_sources = notebook_sources(export_notebook(workspace_store))
 
-    assert "Scope: **full dataset**" in combined_sources
+    assert "Pearson correlation heatmap" in combined_sources
+    assert "Scope: **full dataset**" not in combined_sources
     assert "Column: `age`" not in combined_sources
 
 
@@ -240,8 +241,8 @@ def test_export_includes_group_and_subplot_plot_context(csv_bytes: bytes):
 
     assert "Age and income" in combined_sources
     assert "Grouped and subplot export check" in combined_sources
-    assert "Group by: `segment`" in combined_sources
-    assert "Subplot columns: `age`, `income`" in combined_sources
+    assert "Group by: `segment`" not in combined_sources
+    assert "Subplot columns: `age`, `income`" not in combined_sources
     assert "sns.histplot(" in combined_sources
 
 
@@ -302,18 +303,269 @@ def test_export_without_saved_plots_has_no_selected_plots_section(csv_bytes: byt
     assert "sns." not in combined_sources
 
 
-def test_export_notebook_uses_only_the_active_dataset():
+def test_export_notebook_includes_marked_plots_from_all_workspace_datasets():
     workspace_store = WorkspaceStore()
     first = workspace_store.load_csv(b"x\n1\n2\n", "first.csv")
     first_dataset_id = first["active_dataset_id"]
     workspace_store.save_plot(first["active_session_id"], "x", "histogram", title="First plot")
 
     workspace_store.load_csv(b"y\n10\n20\n", "second.csv")
+    workspace_store.save_plot(
+        workspace_store.active_session_id,
+        "y",
+        "histogram",
+        include_in_export=False,
+        title="Skipped second plot",
+    )
     second_sources = notebook_sources(export_notebook(workspace_store))
     assert "Danaleo EDA Export: second.csv" in second_sources
-    assert "First plot" not in second_sources
+    assert "First plot" in second_sources
+    assert "pd.read_csv('first.csv')" in second_sources
+    assert "Skipped second plot" not in second_sources
 
     workspace_store.set_active_dataset(first_dataset_id)
     first_sources = notebook_sources(export_notebook(workspace_store))
     assert "Danaleo EDA Export: first.csv" in first_sources
     assert "First plot" in first_sources
+
+
+def test_export_notebook_reconstructs_external_plot_session_operations():
+    workspace_store = WorkspaceStore()
+    source = workspace_store.load_csv(b"value\n1\n2\n2\n", "source.csv")
+    branch_id = workspace_store.create_session("Clean source", source["active_session_id"])[
+        "active_session_id"
+    ]
+    workspace_store.apply_session_operation(branch_id, "drop_duplicates", {})
+    workspace_store.save_plot(branch_id, "value", "histogram", title="Source values")
+    workspace_store.load_csv(b"other\n10\n20\n", "active.csv")
+
+    sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "Source values" in sources
+    assert "pd.read_csv('source.csv')" in sources
+    assert ".drop_duplicates().copy()" in sources
+    assert "_plot_df = df_source_clean_source_plot.copy()" in sources
+
+    notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
+    code_cells = [cell.source for cell in notebook.cells if cell.cell_type == "code"]
+    assert "df_source_clean_source_plot = pd.read_csv('source.csv')" in code_cells
+    assert (
+        "df_source_clean_source_plot = "
+        "df_source_clean_source_plot.drop_duplicates().copy()"
+    ) in code_cells
+    assert "df_source_clean_source_plot = df_source_clean_source_plot.copy()" in code_cells
+
+
+def test_export_notebook_rebuilds_merge_without_redundant_markdown():
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(b"id,a\n1,A\n2,B\n", "left.csv")
+    right = workspace_store.load_csv(b"id,b\n2,X\n3,Y\n", "right.csv")
+    workspace_store.create_merged_dataset(
+        left["active_session_id"],
+        right["active_session_id"],
+        "outer",
+        ["id"],
+        ["id"],
+        ["_left", "_right"],
+        name="joined.csv",
+    )
+
+    sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "## Merge provenance" not in sources
+    assert "## Rebuild merged data" not in sources
+    assert "pd.read_csv('left.csv')" in sources
+    assert "pd.read_csv('right.csv')" in sources
+    assert "df = pd.merge(" in sources
+    assert "how='outer'" in sources
+    assert "left_on=['id']" in sources
+    assert "right_on=['id']" in sources
+    assert "pd.read_csv('joined.csv')" not in sources
+
+
+def test_exported_merged_root_operations_and_plots_use_loaded_dataframe():
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(b"id,value\n1,10\n2,20\n2,20\n", "left.csv")
+    right = workspace_store.load_csv(b"id,label\n2,B\n3,C\n", "right.csv")
+    merged = workspace_store.create_merged_dataset(
+        left["active_session_id"],
+        right["active_session_id"],
+        "left",
+        ["id"],
+        ["id"],
+        ["_left", "_right"],
+        name="merged.csv",
+    )
+    merged_session_id = merged["active_session_id"]
+    workspace_store.apply_session_operation(merged_session_id, "drop_duplicates", {})
+    workspace_store.save_plot(
+        merged_session_id,
+        "value",
+        "histogram",
+        title="Merged values",
+    )
+
+    notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
+    sources = "\n\n".join(cell.source for cell in notebook.cells)
+
+    assert "## Session: Merged result" not in sources
+    assert "df = df.drop_duplicates().copy()" in sources
+    assert "_plot_df = df.copy()" in sources
+    assert "df_merged_result" not in sources
+    assert "df = pd.merge(" in sources
+
+    namespace = {
+        "pd": __import__("pandas"),
+        "np": __import__("numpy"),
+        "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
+        "df": workspace_store.require_session(merged_session_id).data.copy(),
+    }
+    for cell in notebook.cells:
+        if (
+            cell.cell_type != "code"
+            or "pd.read_csv" in cell.source
+            or "pd.merge" in cell.source
+            or cell.source == "df.head()"
+        ):
+            continue
+        exec(compile(cell.source, "<merged-export-cell>", "exec"), namespace)
+
+
+def test_renamed_root_session_still_exports_operations_against_df(csv_bytes: bytes):
+    workspace_store = WorkspaceStore()
+    loaded = workspace_store.load_csv(csv_bytes, "customers.csv")
+    root_id = loaded["active_session_id"]
+    workspace_store.rename_session(root_id, "Imported customers")
+    workspace_store.apply_session_operation(root_id, "drop_duplicates", {})
+
+    sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "## Session: Imported customers" not in sources
+    assert "df = df.drop_duplicates().copy()" in sources
+    assert "df_imported_customers" not in sources
+
+
+def test_export_notebook_rebuilds_nested_merge_chain_with_source_session_operations():
+    workspace_store = WorkspaceStore()
+    products = workspace_store.load_csv(
+        b"product_id,subcategory_id,price\n1,10,100\n2,20,200\n3,30,300\n",
+        "products.csv",
+    )
+    product_branch = workspace_store.create_session(
+        "Filtered products",
+        products["active_session_id"],
+    )["active_session_id"]
+    workspace_store.apply_session_operation(
+        product_branch,
+        "filter_rows",
+        {"query": "price >= 200"},
+    )
+    subcategories = workspace_store.load_csv(
+        b"subcategory_id,category_id\n10,1\n20,1\n30,2\n",
+        "subcategories.csv",
+    )
+    first_merge = workspace_store.create_merged_dataset(
+        product_branch,
+        subcategories["active_session_id"],
+        "left",
+        ["subcategory_id"],
+        ["subcategory_id"],
+        ["_product", "_subcategory"],
+        name="products_with_subcategories.csv",
+    )
+    categories = workspace_store.load_csv(
+        b"category_id,category\n1,A\n2,B\n",
+        "categories.csv",
+    )
+    workspace_store.create_merged_dataset(
+        first_merge["active_session_id"],
+        categories["active_session_id"],
+        "left",
+        ["category_id"],
+        ["category_id"],
+        ["_product", "_category"],
+        name="complete_products.csv",
+    )
+
+    sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "pd.read_csv('products.csv')" in sources
+    assert "pd.read_csv('subcategories.csv')" in sources
+    assert "pd.read_csv('categories.csv')" in sources
+    assert ".query('price >= 200').copy()" in sources
+    assert sources.count("pd.merge(") == 2
+    assert "pd.read_csv('products_with_subcategories.csv')" not in sources
+    assert "pd.read_csv('complete_products.csv')" not in sources
+
+
+def test_export_notebook_falls_back_to_merged_snapshot_when_source_dataset_was_removed():
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(b"id,a\n1,A\n2,B\n", "left.csv")
+    left_dataset_id = left["active_dataset_id"]
+    right = workspace_store.load_csv(b"id,b\n2,X\n3,Y\n", "right.csv")
+    workspace_store.create_merged_dataset(
+        left["active_session_id"],
+        right["active_session_id"],
+        "outer",
+        ["id"],
+        ["id"],
+        ["_left", "_right"],
+        name="joined.csv",
+    )
+    workspace_store.delete_dataset(left_dataset_id)
+
+    sources = notebook_sources(export_notebook(workspace_store))
+
+    assert "df = pd.read_csv('joined.csv')" in sources
+    assert "pd.merge(" not in sources
+
+
+def test_exported_markdown_keeps_only_critical_headings_and_user_remarks():
+    workspace_store = WorkspaceStore()
+    loaded = workspace_store.load_csv(b"value\n1\n2\n", "values.csv")
+    child_id = workspace_store.create_session("s1", loaded["active_session_id"])[
+        "active_session_id"
+    ]
+    workspace_store.save_plot(
+        child_id,
+        "value",
+        "histogram",
+        title="Value distribution",
+        remark="Review this distribution.",
+    )
+
+    notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
+    markdown = [cell.source for cell in notebook.cells if cell.cell_type == "markdown"]
+
+    assert markdown == [
+        "# Danaleo EDA Export: values.csv",
+        "## Session: s1",
+        "## Value distribution",
+        "Review this distribution.",
+    ]
+
+
+def test_exported_workflows_emit_each_load_merge_and_operation_as_separate_code_cell():
+    workspace_store = WorkspaceStore()
+    left = workspace_store.load_csv(b"id,value\n1,A\n1,A\n2,B\n", "left.csv")
+    workspace_store.apply_session_operation(left["active_session_id"], "drop_duplicates", {})
+    right = workspace_store.load_csv(b"id,label\n1,X\n2,Y\n", "right.csv")
+    merged = workspace_store.create_merged_dataset(
+        left["active_session_id"],
+        right["active_session_id"],
+        "left",
+        ["id"],
+        ["id"],
+        ["_left", "_right"],
+        name="merged.csv",
+    )
+    workspace_store.apply_session_operation(merged["active_session_id"], "drop_duplicates", {})
+
+    notebook = nbformat.reads(export_notebook(workspace_store).decode("utf-8"), as_version=4)
+    code_cells = [cell.source for cell in notebook.cells if cell.cell_type == "code"]
+
+    assert "df_left = pd.read_csv('left.csv')" in code_cells
+    assert "df_left = df_left.drop_duplicates().copy()" in code_cells
+    assert "df_right = pd.read_csv('right.csv')" in code_cells
+    assert any(source.startswith("df = pd.merge(") for source in code_cells)
+    assert "df = df.drop_duplicates().copy()" in code_cells
