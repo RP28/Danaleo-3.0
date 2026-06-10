@@ -19,6 +19,42 @@ def test_missing_modules_and_dependency_error(monkeypatch):
         main._ensure_python_dependencies()
 
 
+def test_remove_matplotlib_appledouble_files(tmp_path, monkeypatch):
+    package_dir = tmp_path / "matplotlib"
+    style_dir = package_dir / "mpl-data" / "stylelib"
+    style_dir.mkdir(parents=True)
+    sidecar = style_dir / "._classic.mplstyle"
+    sidecar.write_bytes(main.APPLEDOUBLE_MAGIC + b"metadata")
+    hidden_style = style_dir / "._intentional.mplstyle"
+    hidden_style.write_text("axes.grid: true")
+
+    class Spec:
+        submodule_search_locations = [str(package_dir)]
+
+    monkeypatch.setattr(main.importlib.util, "find_spec", lambda name: Spec())
+
+    assert main._remove_matplotlib_appledouble_files() == 1
+    assert not sidecar.exists()
+    assert hidden_style.exists()
+
+
+def test_remove_matplotlib_appledouble_files_reports_unlink_failure(tmp_path, monkeypatch):
+    package_dir = tmp_path / "matplotlib"
+    style_dir = package_dir / "mpl-data" / "stylelib"
+    style_dir.mkdir(parents=True)
+    sidecar = style_dir / "._classic.mplstyle"
+    sidecar.write_bytes(main.APPLEDOUBLE_MAGIC + b"metadata")
+
+    class Spec:
+        submodule_search_locations = [str(package_dir)]
+
+    monkeypatch.setattr(main.importlib.util, "find_spec", lambda name: Spec())
+    monkeypatch.setattr(main.Path, "unlink", lambda self: (_ for _ in ()).throw(OSError("denied")))
+
+    with pytest.raises(RuntimeError, match=r"Remove the \._\* files"):
+        main._remove_matplotlib_appledouble_files()
+
+
 def test_static_ui_exists_requires_index_assets_folder_and_javascript(tmp_path, monkeypatch):
     static = tmp_path / "static"
     monkeypatch.setattr(main, "STATIC_DIR", static)
@@ -129,6 +165,7 @@ def test_start_orchestrates_checks_browser_and_uvicorn(monkeypatch):
     calls = []
 
     monkeypatch.setattr(main, "_ensure_python_dependencies", lambda: calls.append("deps"))
+    monkeypatch.setattr(main, "_remove_matplotlib_appledouble_files", lambda: calls.append("metadata"))
     monkeypatch.setattr(main, "_ensure_frontend_built", lambda **kwargs: calls.append(("ui", kwargs)))
     monkeypatch.setattr(main, "_check_port_available", lambda host, port: calls.append(("port", host, port)))
     monkeypatch.setattr(main, "_open_browser", lambda url: calls.append(("browser", url)))
@@ -150,6 +187,7 @@ def test_start_orchestrates_checks_browser_and_uvicorn(monkeypatch):
     main.start(host="0.0.0.0", port=9000, force_build_ui=True)
 
     assert "deps" in calls
+    assert "metadata" in calls
     assert ("browser", "http://127.0.0.1:9000") in calls
     assert ("uvicorn", "danaleo.server.app:app", {"host": "0.0.0.0", "port": 9000, "reload": False}) in calls
 

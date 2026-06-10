@@ -23,7 +23,7 @@ from danaleo.server.models import (
     UpdatePlotRequest,
 )
 
-app = FastAPI(title="Danaleo", version="3.0.1")
+app = FastAPI(title="Danaleo", version="3.0.2")
 
 app.add_middleware(
     CORSMiddleware,

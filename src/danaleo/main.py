@@ -29,6 +29,8 @@ REQUIRED_MODULES = {
     "pydantic": "pydantic",
 }
 
+APPLEDOUBLE_MAGIC = b"\x00\x05\x16\x07"
+
 
 def _missing_modules() -> list[str]:
     missing: list[str] = []
@@ -38,6 +40,35 @@ def _missing_modules() -> list[str]:
             missing.append(package_name)
 
     return missing
+
+
+def _remove_matplotlib_appledouble_files() -> int:
+    """Remove macOS metadata files that Matplotlib mistakes for style files."""
+    spec = importlib.util.find_spec("matplotlib")
+    if spec is None or not spec.submodule_search_locations:
+        return 0
+
+    removed = 0
+    for package_dir in spec.submodule_search_locations:
+        style_dir = Path(package_dir) / "mpl-data" / "stylelib"
+        if not style_dir.is_dir():
+            continue
+
+        for path in style_dir.glob("._*.mplstyle"):
+            try:
+                with path.open("rb") as metadata_file:
+                    if metadata_file.read(4) != APPLEDOUBLE_MAGIC:
+                        continue
+                path.unlink()
+                removed += 1
+            except OSError as exc:
+                raise RuntimeError(
+                    "macOS metadata files in Matplotlib's style directory prevent it from loading.\n\n"
+                    f"Danaleo could not remove: {path}\n\n"
+                    f"Remove the ._* files from this directory and try again:\n\n  {style_dir}"
+                ) from exc
+
+    return removed
 
 
 def _ensure_python_dependencies() -> None:
@@ -194,6 +225,8 @@ def start(
     """
     if check_env:
         _ensure_python_dependencies()
+
+    _remove_matplotlib_appledouble_files()
 
     _ensure_frontend_built(
         build_if_missing=build_ui,
