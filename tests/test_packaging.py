@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -15,6 +16,18 @@ def test_pyproject_defines_installable_package_and_cli():
     assert config["project"]["scripts"]["danaleo"] == "danaleo.cli:main"
     assert config["tool"]["setuptools"]["packages"]["find"]["where"] == ["src"]
     assert config["tool"]["setuptools"]["package-data"]["danaleo"] == ["server/static/**/*"]
+
+
+def test_release_version_is_consistent():
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    package_init = (ROOT / "src" / "danaleo" / "__init__.py").read_text(encoding="utf-8")
+    server_app = (ROOT / "src" / "danaleo" / "server" / "app.py").read_text(encoding="utf-8")
+    frontend = json.loads((ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+    version = config["project"]["version"]
+
+    assert f'__version__ = "{version}"' in package_init
+    assert f'version="{version}"' in server_app
+    assert frontend["version"] == version
 
 
 def test_packaged_frontend_assets_and_module_entrypoint_exist():
