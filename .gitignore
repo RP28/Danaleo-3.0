@@ -6,9 +6,7 @@ frontend/node_modules/
 frontend/.vite/
 frontend/dist/
 
-# Generated packaged frontend build
-src/danaleo/server/static/*
-!src/danaleo/server/static/.gitkeep
+# Packaged frontend build is committed so clean pip builds include the UI.
 
 # Python
 __pycache__/

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,7 +9,25 @@ description = "Localhost interactive EDA workspace for tabular data files"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Danaleo" }]
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["data-analysis", "data-visualization", "eda", "pandas", "fastapi"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -31,13 +49,23 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.2",
     "pytest>=8.0",
     "httpx>=0.27",
     "ruff>=0.6",
+    "twine>=5.1",
 ]
 
 [project.scripts]
-danaleo = "danaleo.main:cli"
+danaleo = "danaleo.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/RP28/Danaleo-3.0"
+Repository = "https://github.com/RP28/Danaleo-3.0"
+Issues = "https://github.com/RP28/Danaleo-3.0/issues"
+
+[tool.setuptools]
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
